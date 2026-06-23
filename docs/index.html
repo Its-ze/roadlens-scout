@@ -177,6 +177,37 @@
         gap: 10px;
       }
 
+      .compat-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .compat-grid div {
+        border: 1px solid rgba(65, 85, 97, 0.64);
+        border-radius: 8px;
+        padding: 11px;
+        background: var(--panel);
+      }
+
+      .compat-grid strong {
+        display: block;
+        color: var(--mint-2);
+        font-size: 13px;
+      }
+
+      .compat-grid span {
+        display: block;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+        margin-top: 4px;
+      }
+
+      .compat-grid .warn strong {
+        color: var(--amber);
+      }
+
       .map-preview {
         min-height: 260px;
         border: 1px solid rgba(65, 85, 97, 0.64);
@@ -340,6 +371,7 @@
         }
 
         .actions,
+        .compat-grid,
         .links {
           grid-template-columns: 1fr;
           display: grid;
@@ -375,17 +407,28 @@
           <div class="install-copy">
             <h2>Flash the sensor. Load the map.</h2>
             <p class="muted">
-              ESP32 firmware, Android APK, checksums, and release metadata in one Pages-ready package.
+              Auto-detected ESP32-family sensor firmware, Android APK, checksums, and release metadata in one Pages-ready package.
             </p>
 
             <div class="actions">
               <esp-web-install-button manifest="flasher/manifest.json">
-                <button class="primary" slot="activate">Flash ESP32</button>
+                <button class="primary" slot="activate">Flash Detected ESP32</button>
               </esp-web-install-button>
               <a id="apkDownload" class="primary" href="downloads/roadlens-scout-v0.1.0-debug.apk" download>
                 Download APK
               </a>
               <a href="flasher/">Open Flasher Page</a>
+            </div>
+
+            <div class="compat-grid" aria-label="ESP32 compatibility">
+              <div>
+                <strong>Auto chip detection</strong>
+                <span>Installer picks ESP32, ESP32-S3, or ESP32-C3 builds automatically.</span>
+              </div>
+              <div class="warn">
+                <strong>No working phone sensor build</strong>
+                <span>ESP32-S2 has no BLE; C6/H2/P4 are not published by this Arduino firmware package yet.</span>
+              </div>
             </div>
           </div>
 
@@ -415,6 +458,10 @@
               <strong>Firmware SHA256</strong>
               <span id="firmwareHash">loading</span>
             </div>
+            <div>
+              <strong>Firmware Builds</strong>
+              <span id="firmwareBuilds">loading</span>
+            </div>
           </div>
         </aside>
       </section>
@@ -436,10 +483,15 @@
           document.getElementById("version").textContent = meta.version;
           document.getElementById("apkHash").textContent = meta.apk.sha256;
           document.getElementById("firmwareHash").textContent = meta.firmware.sha256;
+          const builds = meta.firmware.builds || [];
+          document.getElementById("firmwareBuilds").textContent = builds.length
+            ? builds.map((build) => build.chipFamily).join(", ")
+            : "ESP32";
         })
         .catch(() => {
           document.getElementById("apkHash").textContent = "metadata unavailable";
           document.getElementById("firmwareHash").textContent = "metadata unavailable";
+          document.getElementById("firmwareBuilds").textContent = "metadata unavailable";
         });
     </script>
   </body>

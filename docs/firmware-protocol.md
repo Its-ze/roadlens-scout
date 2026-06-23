@@ -2,6 +2,8 @@
 
 The ESP32 advertises as `RoadLensESP32`.
 
+Published browser-flasher builds support ESP32 / ESP32-WROOM / ESP32-WROVER, ESP32-S3, and ESP32-C3. The ESP Web Tools manifest auto-detects the chip family and selects the matching image. ESP32-S2 cannot work as a RoadLens phone sensor because it has no Bluetooth; ESP32-C6/H2/P4 builds are not published by this Arduino firmware package yet.
+
 BLE service:
 
 - Service: `7d1d0001-52a1-4b81-9fd2-fd7ec3f501000`

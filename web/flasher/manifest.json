@@ -1,25 +1,67 @@
 {
     "name":  "RoadLens Scout ESP32 Sensor",
-    "version":  "0.1.0",
+    "version":  "0.1.2",
     "new_install_prompt_erase":  true,
     "builds":  [
                    {
                        "chipFamily":  "ESP32",
                        "parts":  [
                                      {
-                                         "path":  "firmware/bootloader.bin",
+                                         "path":  "firmware/esp32/bootloader.bin",
                                          "offset":  4096
                                      },
                                      {
-                                         "path":  "firmware/partitions.bin",
+                                         "path":  "firmware/esp32/partitions.bin",
                                          "offset":  32768
                                      },
                                      {
-                                         "path":  "firmware/boot_app0.bin",
+                                         "path":  "firmware/esp32/boot_app0.bin",
                                          "offset":  57344
                                      },
                                      {
-                                         "path":  "firmware/firmware.bin",
+                                         "path":  "firmware/esp32/firmware.bin",
+                                         "offset":  65536
+                                     }
+                                 ]
+                   },
+                   {
+                       "chipFamily":  "ESP32-S3",
+                       "parts":  [
+                                     {
+                                         "path":  "firmware/esp32s3/bootloader.bin",
+                                         "offset":  4096
+                                     },
+                                     {
+                                         "path":  "firmware/esp32s3/partitions.bin",
+                                         "offset":  32768
+                                     },
+                                     {
+                                         "path":  "firmware/esp32s3/boot_app0.bin",
+                                         "offset":  57344
+                                     },
+                                     {
+                                         "path":  "firmware/esp32s3/firmware.bin",
+                                         "offset":  65536
+                                     }
+                                 ]
+                   },
+                   {
+                       "chipFamily":  "ESP32-C3",
+                       "parts":  [
+                                     {
+                                         "path":  "firmware/esp32c3/bootloader.bin",
+                                         "offset":  4096
+                                     },
+                                     {
+                                         "path":  "firmware/esp32c3/partitions.bin",
+                                         "offset":  32768
+                                     },
+                                     {
+                                         "path":  "firmware/esp32c3/boot_app0.bin",
+                                         "offset":  57344
+                                     },
+                                     {
+                                         "path":  "firmware/esp32c3/firmware.bin",
                                          "offset":  65536
                                      }
                                  ]

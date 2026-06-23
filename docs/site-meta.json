@@ -1,7 +1,7 @@
 {
     "name":  "RoadLens Scout",
     "version":  "0.1.1",
-    "generatedAt":  "2026-06-23T13:52:26Z",
+    "generatedAt":  "2026-06-23T17:26:24Z",
     "apk":  {
                 "path":  "downloads/roadlens-scout-v0.1.1-debug.apk",
                 "bytes":  5430830,
@@ -9,8 +9,28 @@
             },
     "firmware":  {
                      "manifest":  "flasher/manifest.json",
-                     "path":  "flasher/firmware/firmware.bin",
-                     "bytes":  1004704,
-                     "sha256":  "47059d4871ac84b25c786a043afc565a883a3cc23b16ce98ae71d5bcee9b5b74"
+                     "path":  "flasher/firmware/esp32/firmware.bin",
+                     "bytes":  1005008,
+                     "sha256":  "cb9d7764b816c3b5b33e05d5e08d6a2d8b49684558d9377f65f4b030d28b5464",
+                     "builds":  [
+                                    {
+                                        "chipFamily":  "ESP32",
+                                        "path":  "flasher/firmware/esp32/firmware.bin",
+                                        "bytes":  1005008,
+                                        "sha256":  "cb9d7764b816c3b5b33e05d5e08d6a2d8b49684558d9377f65f4b030d28b5464"
+                                    },
+                                    {
+                                        "chipFamily":  "ESP32-S3",
+                                        "path":  "flasher/firmware/esp32s3/firmware.bin",
+                                        "bytes":  888336,
+                                        "sha256":  "2b75f96be23440f223c863efaa1b332421747ea4c15604e10f90aab278f18332"
+                                    },
+                                    {
+                                        "chipFamily":  "ESP32-C3",
+                                        "path":  "flasher/firmware/esp32c3/firmware.bin",
+                                        "bytes":  960176,
+                                        "sha256":  "ee1969dbf3218ff1adf3d8e77db0057ff61c22052f54cc516f3e8967cf096aa1"
+                                    }
+                                ]
                  }
 }

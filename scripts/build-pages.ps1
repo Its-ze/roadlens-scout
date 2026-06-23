@@ -39,16 +39,48 @@ Copy-Item -LiteralPath $BrandMark -Destination (Join-Path $DocsAssets "roadlens-
 
 Copy-Item -LiteralPath $ApkPath -Destination $DocsApk -Force
 
-$firmwareBin = Join-Path $DocsFlasher "firmware\firmware.bin"
-$firmwareHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $firmwareBin).Hash.ToLowerInvariant()
 $apkHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $DocsApk).Hash.ToLowerInvariant()
 $apkItem = Get-Item -LiteralPath $DocsApk
-$firmwareItem = Get-Item -LiteralPath $firmwareBin
+$manifestPath = Join-Path $DocsFlasher "manifest.json"
+$manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+$firmwareFiles = Get-ChildItem -LiteralPath (Join-Path $DocsFlasher "firmware") -Filter "*.bin" -Recurse |
+  Sort-Object FullName
 
-$checksumText = @(
-  "$apkHash  downloads/$ApkName",
-  "$firmwareHash  flasher/firmware/firmware.bin"
-) -join "`n"
+if (-not $firmwareFiles) {
+  throw "No firmware binaries found under $DocsFlasher\firmware"
+}
+
+$firmwareBuilds = @()
+foreach ($build in @($manifest.builds)) {
+  $appPart = @($build.parts) | Where-Object { $_.path -match '/firmware\.bin$' } | Select-Object -First 1
+  if (-not $appPart) {
+    continue
+  }
+  $appPath = Join-Path $DocsFlasher ($appPart.path -replace '/', '\')
+  if (-not (Test-Path -LiteralPath $appPath)) {
+    throw "Manifest references missing firmware binary: $($appPart.path)"
+  }
+  $appItem = Get-Item -LiteralPath $appPath
+  $firmwareBuilds += [ordered]@{
+    chipFamily = $build.chipFamily
+    path = "flasher/$($appPart.path)"
+    bytes = $appItem.Length
+    sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $appPath).Hash.ToLowerInvariant()
+  }
+}
+
+$primaryFirmware = $firmwareBuilds | Where-Object { $_.chipFamily -eq "ESP32" } | Select-Object -First 1
+if (-not $primaryFirmware) {
+  $primaryFirmware = $firmwareBuilds | Select-Object -First 1
+}
+
+$checksumLines = @("$apkHash  downloads/$ApkName")
+foreach ($file in $firmwareFiles) {
+  $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
+  $relative = $file.FullName.Substring($DocsDir.Length + 1).Replace('\', '/')
+  $checksumLines += "$hash  $relative"
+}
+$checksumText = $checksumLines -join "`n"
 [System.IO.File]::WriteAllText((Join-Path $DocsDownloads "checksums.txt"), $checksumText + "`n", [System.Text.UTF8Encoding]::new($false))
 
 $meta = [ordered]@{
@@ -62,9 +94,10 @@ $meta = [ordered]@{
   }
   firmware = [ordered]@{
     manifest = "flasher/manifest.json"
-    path = "flasher/firmware/firmware.bin"
-    bytes = $firmwareItem.Length
-    sha256 = $firmwareHash
+    path = $primaryFirmware.path
+    bytes = $primaryFirmware.bytes
+    sha256 = $primaryFirmware.sha256
+    builds = $firmwareBuilds
   }
 }
 

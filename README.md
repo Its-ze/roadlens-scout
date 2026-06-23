@@ -29,7 +29,15 @@ The generator uses `assets\brand\roadlens-mark.svg` as the source of truth and w
 .\scripts\build-firmware.ps1
 ```
 
-That compiles the ESP32 firmware and copies the browser-flasher binaries into `web\flasher\firmware`.
+That compiles the verified BLE sensor targets and copies the browser-flasher binaries into `web\flasher\firmware`.
+
+Published sensor builds:
+
+- `esp32dev` -> ESP32 / ESP32-WROOM / ESP32-WROVER
+- `esp32s3` -> ESP32-S3
+- `esp32c3` -> ESP32-C3
+
+The ESP Web Tools manifest auto-detects the connected chip family and selects the matching build. ESP32-S2 has no Bluetooth, and ESP32-C6/H2/P4 are not published by this Arduino firmware package yet.
 
 ## Flash ESP32
 
@@ -48,6 +56,13 @@ USB upload:
 ```
 
 Replace `COM15` with the live ESP32 port.
+
+For a specific USB-upload target:
+
+```powershell
+.\scripts\flash-firmware.ps1 -Port COM15 -Environment esp32s3
+.\scripts\flash-firmware.ps1 -Port COM15 -Environment esp32c3
+```
 
 ## Android App
 
@@ -101,10 +116,10 @@ Release requirements:
 
 The `docs/` folder is a Pages-ready static site. It includes:
 
-- Root page with `Flash ESP32` and `Download APK` buttons.
+- Root page with auto-detected ESP32-family flashing and `Download APK` buttons.
 - ESP Web Tools flasher copied to `docs/flasher/`.
 - Current Android APK copied to `docs/downloads/`.
-- `docs/site-meta.json` and `docs/downloads/checksums.txt`.
+- `docs/site-meta.json` and `docs/downloads/checksums.txt`, including per-chip firmware hashes.
 
 Refresh Pages artifacts after firmware or APK changes:
 
