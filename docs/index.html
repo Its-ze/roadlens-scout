@@ -415,7 +415,7 @@
               <esp-web-install-button manifest="flasher/manifest.json">
                 <button class="primary" slot="activate">Flash Detected ESP32</button>
               </esp-web-install-button>
-              <a id="apkDownload" class="primary" href="downloads/roadlens-scout-v0.1.0-debug.apk" download>
+              <a id="apkDownload" class="primary" href="https://github.com/Its-ze/roadlens-scout/releases/latest">
                 Download APK
               </a>
               <a href="flasher/">Open Flasher Page</a>
@@ -484,7 +484,11 @@
         .then((meta) => {
           const apk = document.getElementById("apkDownload");
           apk.href = meta.apk.path;
-          apk.setAttribute("download", meta.apk.path.split("/").pop());
+          if (meta.apk.path.startsWith("http")) {
+            apk.removeAttribute("download");
+          } else {
+            apk.setAttribute("download", meta.apk.path.split("/").pop());
+          }
           document.getElementById("version").textContent = meta.version;
           document.getElementById("apkHash").textContent = meta.apk.sha256;
           document.getElementById("firmwareHash").textContent = meta.firmware.sha256;

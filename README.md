@@ -123,7 +123,7 @@ The `docs/` folder is a Pages-ready static site. It includes:
 
 - Root page with auto-detected ESP32-family flashing and `Download APK` buttons.
 - ESP Web Tools flasher copied to `docs/flasher/`.
-- Current Android APK copied to `docs/downloads/`.
+- Android APK metadata and download link pointed at the matching GitHub release asset.
 - `docs/site-meta.json` and `docs/downloads/checksums.txt`, including per-chip firmware hashes.
 
 Refresh Pages artifacts after firmware or APK changes:

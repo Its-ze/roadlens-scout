@@ -22,7 +22,7 @@ $DocsDownloads = Join-Path $DocsDir "downloads"
 $DocsAssets = Join-Path $DocsDir "assets"
 $BrandMark = Join-Path $Root "assets\brand\roadlens-mark.svg"
 $ApkName = "roadlens-scout-v$Version-debug.apk"
-$DocsApk = Join-Path $DocsDownloads $ApkName
+$ApkReleaseUrl = "https://github.com/Its-ze/roadlens-scout/releases/download/v$Version/$ApkName"
 
 foreach ($required in @($FlasherSource, (Join-Path $FlasherSource "manifest.json"), (Join-Path $FlasherSource "firmware"), $ApkPath, $BrandMark)) {
   if (-not (Test-Path -LiteralPath $required)) {
@@ -37,10 +37,8 @@ Copy-Item -Path (Join-Path $FlasherSource "*") -Destination $DocsFlasher -Recurs
 Remove-Item -LiteralPath (Join-Path $DocsFlasher ".server.pid") -Force -ErrorAction SilentlyContinue
 Copy-Item -LiteralPath $BrandMark -Destination (Join-Path $DocsAssets "roadlens-mark.svg") -Force
 
-Copy-Item -LiteralPath $ApkPath -Destination $DocsApk -Force
-
-$apkHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $DocsApk).Hash.ToLowerInvariant()
-$apkItem = Get-Item -LiteralPath $DocsApk
+$apkHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ApkPath).Hash.ToLowerInvariant()
+$apkItem = Get-Item -LiteralPath $ApkPath
 $manifestPath = Join-Path $DocsFlasher "manifest.json"
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $firmwareFiles = Get-ChildItem -LiteralPath (Join-Path $DocsFlasher "firmware") -Filter "*.bin" -Recurse |
@@ -74,7 +72,7 @@ if (-not $primaryFirmware) {
   $primaryFirmware = $firmwareBuilds | Select-Object -First 1
 }
 
-$checksumLines = @("$apkHash  downloads/$ApkName")
+$checksumLines = @("$apkHash  $ApkReleaseUrl")
 foreach ($file in $firmwareFiles) {
   $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
   $relative = $file.FullName.Substring($DocsDir.Length + 1).Replace('\', '/')
@@ -88,7 +86,8 @@ $meta = [ordered]@{
   version = $Version
   generatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
   apk = [ordered]@{
-    path = "downloads/$ApkName"
+    path = $ApkReleaseUrl
+    asset = $ApkName
     bytes = $apkItem.Length
     sha256 = $apkHash
   }
@@ -106,5 +105,5 @@ $json = $meta | ConvertTo-Json -Depth 8
 
 "GitHub Pages staged:"
 "  $DocsDir"
-"  APK: downloads/$ApkName"
+"  APK: $ApkReleaseUrl"
 "  Firmware manifest: flasher/manifest.json"
