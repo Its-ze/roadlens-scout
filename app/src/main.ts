@@ -1,8 +1,8 @@
 import './style.css';
 import 'leaflet/dist/leaflet.css';
 
-import { BleClient } from '@capacitor-community/bluetooth-le';
-import type { BleDevice } from '@capacitor-community/bluetooth-le';
+import { BleClient, ScanMode } from '@capacitor-community/bluetooth-le';
+import type { BleDevice, ScanResult } from '@capacitor-community/bluetooth-le';
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import { Geolocation } from '@capacitor/geolocation';
@@ -220,15 +220,11 @@ function initMap() {
 
 async function connectSensor() {
   try {
-    setSensorState('busy', 'Requesting sensor');
+    setSensorState('busy', 'Preparing Bluetooth');
     await startLocationWatch();
     await BleClient.initialize({ androidNeverForLocation: false });
 
-    const device = await BleClient.requestDevice({
-      services: [SERVICE_UUID],
-      optionalServices: [SERVICE_UUID],
-      namePrefix: 'RoadLens',
-    });
+    const device = await findSensorDevice();
 
     setSensorState('busy', `Connecting to ${device.name ?? 'sensor'}`);
     await BleClient.connect(device.deviceId, () => {
@@ -251,6 +247,107 @@ async function connectSensor() {
     setSensorState('error', error instanceof Error ? error.message : 'Connection failed');
     signalText.textContent = 'Error';
   }
+}
+
+async function findSensorDevice(): Promise<BleDevice> {
+  if (Capacitor.getPlatform() !== 'web') {
+    const scannedDevice = await scanForSensorDevice();
+    if (scannedDevice) {
+      return scannedDevice;
+    }
+  }
+
+  return requestSensorFromPicker();
+}
+
+async function scanForSensorDevice(): Promise<BleDevice | null> {
+  let bestDevice: BleDevice | null = null;
+  let bestRssi = Number.NEGATIVE_INFINITY;
+
+  setSensorState('busy', 'Scanning for RoadLensESP32');
+
+  try {
+    await BleClient.requestLEScan(
+      {
+        allowDuplicates: true,
+        scanMode: ScanMode.SCAN_MODE_LOW_LATENCY,
+      },
+      (result: ScanResult) => {
+        const name = result.localName ?? result.device.name ?? '';
+        const uuids = [
+          ...(result.uuids ?? []),
+          ...(result.device.uuids ?? []),
+        ].map((uuid) => uuid.toLowerCase());
+        const isRoadLens =
+          name.startsWith('RoadLens') || uuids.includes(SERVICE_UUID);
+
+        if (!isRoadLens) {
+          return;
+        }
+
+        const rssi = result.rssi ?? Number.NEGATIVE_INFINITY;
+        if (!bestDevice || rssi > bestRssi) {
+          bestDevice = result.device;
+          bestRssi = rssi;
+          setSensorState('busy', `Found ${name || SENSOR_NAME}`);
+        }
+      },
+    );
+
+    await delay(6500);
+  } catch {
+    return null;
+  } finally {
+    await BleClient.stopLEScan().catch(() => undefined);
+  }
+
+  return bestDevice;
+}
+
+async function requestSensorFromPicker(): Promise<BleDevice> {
+  const attempts = [
+    {
+      label: 'Opening RoadLens service picker',
+      options: {
+        services: [SERVICE_UUID],
+        optionalServices: [SERVICE_UUID],
+        scanMode: ScanMode.SCAN_MODE_LOW_LATENCY,
+      },
+    },
+    {
+      label: 'Opening RoadLens name picker',
+      options: {
+        namePrefix: 'RoadLens',
+        optionalServices: [SERVICE_UUID],
+        scanMode: ScanMode.SCAN_MODE_LOW_LATENCY,
+      },
+    },
+    {
+      label: 'Opening broad BLE picker',
+      options: {
+        optionalServices: [SERVICE_UUID],
+        scanMode: ScanMode.SCAN_MODE_LOW_LATENCY,
+      },
+    },
+  ];
+  let lastError: unknown = null;
+
+  for (const attempt of attempts) {
+    try {
+      setSensorState('busy', attempt.label);
+      return await BleClient.requestDevice(attempt.options);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('No BLE sensor selected');
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 async function sendCommand(command: string) {

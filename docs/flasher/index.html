@@ -183,7 +183,7 @@
         <div>
           <span class="eyebrow">RoadLens Scout</span>
           <h1>ESP32 Flasher</h1>
-          <p>Sensor firmware with automatic chip-family detection.</p>
+          <p>Sensor firmware with automatic chip-family detection and BLE-first startup.</p>
         </div>
       </header>
 
@@ -199,7 +199,7 @@
           </div>
           <div>
             <strong>BLE</strong>
-            <span>RoadLensESP32 link</span>
+            <span>advertises before scanning</span>
           </div>
           <div>
             <strong>Wi-Fi</strong>
@@ -215,6 +215,10 @@
           <div>
             <strong>Supported sensor chips</strong>
             <p>ESP32 / ESP32-WROOM / ESP32-WROVER, ESP32-S3, and ESP32-C3. The installer detects the connected chip and flashes the matching RoadLens build.</p>
+          </div>
+          <div>
+            <strong>Phone connection check</strong>
+            <p>After flashing, reset the board and connect from the Android app. The sensor advertises as RoadLensESP32 first, then starts passive Wi-Fi detection after the phone links.</p>
           </div>
           <div class="warn">
             <strong>No working phone sensor build</strong>

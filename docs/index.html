@@ -408,6 +408,7 @@
             <h2>Flash the sensor. Load the map.</h2>
             <p class="muted">
               Auto-detected ESP32-family sensor firmware, Android APK, checksums, and release metadata in one Pages-ready package.
+              This firmware advertises over BLE first, then starts passive detection after the phone connects.
             </p>
 
             <div class="actions">
@@ -424,6 +425,10 @@
               <div>
                 <strong>Auto chip detection</strong>
                 <span>Installer picks ESP32, ESP32-S3, or ESP32-C3 builds automatically.</span>
+              </div>
+              <div>
+                <strong>BLE-first startup</strong>
+                <span>After reset, connect to RoadLensESP32 from the app before Wi-Fi monitor mode starts.</span>
               </div>
               <div class="warn">
                 <strong>No working phone sensor build</strong>

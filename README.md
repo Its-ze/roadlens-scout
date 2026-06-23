@@ -57,6 +57,11 @@ USB upload:
 
 Replace `COM15` with the live ESP32 port.
 
+After flashing, reset or power-cycle the board and look for the BLE device name
+`RoadLensESP32` from the Android app. Firmware `0.1.3` keeps Wi-Fi monitor mode
+off until the phone connects, so the ESP32 advertises over Bluetooth first and
+then starts passive detection after the app is linked.
+
 For a specific USB-upload target:
 
 ```powershell

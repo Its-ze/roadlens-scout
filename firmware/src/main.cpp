@@ -39,11 +39,15 @@ struct SeenEntry {
 static QueueHandle_t detectionQueue = nullptr;
 static NimBLECharacteristic *notifyCharacteristic = nullptr;
 static bool bleConnected = false;
+static bool wifiSnifferActive = false;
 static uint8_t channelIndex = 0;
 static uint32_t lastChannelHopMs = 0;
 static uint32_t lastStatusMs = 0;
 static uint32_t detectionCount = 0;
 static SeenEntry seenEntries[24] = {};
+
+static void setupSniffer();
+static void stopSniffer();
 
 static void formatMac(const uint8_t *mac, char *out, size_t outLen) {
   snprintf(out, outLen, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1],
@@ -220,11 +224,13 @@ static void emitDetection(const DetectionEvent &event) {
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer *) override {
     bleConnected = true;
+    setupSniffer();
     emitStatus("ble-connected");
   }
 
   void onDisconnect(NimBLEServer *) override {
     bleConnected = false;
+    stopSniffer();
     NimBLEDevice::startAdvertising();
   }
 };
@@ -279,7 +285,23 @@ static void setupBle() {
   advertising->start();
 }
 
+static void stopSniffer() {
+  if (!wifiSnifferActive) {
+    return;
+  }
+
+  esp_wifi_set_promiscuous(false);
+  esp_wifi_set_promiscuous_rx_cb(nullptr);
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
+  wifiSnifferActive = false;
+}
+
 static void setupSniffer() {
+  if (wifiSnifferActive) {
+    return;
+  }
+
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true, true);
 
@@ -291,6 +313,7 @@ static void setupSniffer() {
   esp_wifi_set_promiscuous_rx_cb(&snifferCallback);
   esp_wifi_set_channel(CHANNELS[channelIndex], WIFI_SECOND_CHAN_NONE);
   esp_wifi_set_promiscuous(true);
+  wifiSnifferActive = true;
 }
 
 void setup() {
@@ -302,14 +325,13 @@ void setup() {
 
   detectionQueue = xQueueCreate(24, sizeof(DetectionEvent));
   setupBle();
-  setupSniffer();
   emitStatus("boot");
 }
 
 void loop() {
   const uint32_t nowMs = millis();
 
-  if (nowMs - lastChannelHopMs >= CHANNEL_DWELL_MS) {
+  if (wifiSnifferActive && nowMs - lastChannelHopMs >= CHANNEL_DWELL_MS) {
     channelIndex = (channelIndex + 1) % (sizeof(CHANNELS) / sizeof(CHANNELS[0]));
     esp_wifi_set_channel(CHANNELS[channelIndex], WIFI_SECOND_CHAN_NONE);
     lastChannelHopMs = nowMs;

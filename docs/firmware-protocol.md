@@ -2,6 +2,11 @@
 
 The ESP32 advertises as `RoadLensESP32`.
 
+Firmware `0.1.3` starts in BLE-first mode: it advertises `RoadLensESP32`
+without running Wi-Fi promiscuous scanning, then starts passive Wi-Fi detection
+after the phone connects. On disconnect, Wi-Fi monitor mode is stopped and BLE
+advertising restarts.
+
 Published browser-flasher builds support ESP32 / ESP32-WROOM / ESP32-WROVER, ESP32-S3, and ESP32-C3. The ESP Web Tools manifest auto-detects the chip family and selects the matching image. ESP32-S2 cannot work as a RoadLens phone sensor because it has no Bluetooth; ESP32-C6/H2/P4 builds are not published by this Arduino firmware package yet.
 
 BLE service:
