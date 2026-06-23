@@ -1,2 +1,2 @@
-47dfc48eb546c454fc0b5547e0050f071063133844c61dd1d9ddb1e6d28eaf25  downloads/roadlens-scout-v0.1.0-debug.apk
+4c48c33e0e227b70045a42b1980b1d09b9b205a766a79a1ac8d8d2dfdcd080e0  downloads/roadlens-scout-v0.1.1-debug.apk
 47059d4871ac84b25c786a043afc565a883a3cc23b16ce98ae71d5bcee9b5b74  flasher/firmware/firmware.bin
