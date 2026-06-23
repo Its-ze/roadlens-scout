@@ -13,9 +13,9 @@ import { createIcons, icons } from 'lucide';
 import { buildSmartTargets, hasCoordinates, TARGET_MIN_SIGHTINGS } from './smartTargets';
 import type { SmartTarget, Spot } from './smartTargets';
 
-const SERVICE_UUID = '7d1d0001-52a1-4b81-9fd2-fd7ec3f501000';
-const NOTIFY_UUID = '7d1d0002-52a1-4b81-9fd2-fd7ec3f501000';
-const COMMAND_UUID = '7d1d0003-52a1-4b81-9fd2-fd7ec3f501000';
+const SERVICE_UUID = '7d1d0001-52a1-4b81-9fd2-fd7ec3f50100';
+const NOTIFY_UUID = '7d1d0002-52a1-4b81-9fd2-fd7ec3f50100';
+const COMMAND_UUID = '7d1d0003-52a1-4b81-9fd2-fd7ec3f50100';
 const STORAGE_KEY = 'roadlens.spots.v1';
 const APP_VERSION = __APP_VERSION__;
 const UPDATE_REPO = __GITHUB_REPO__;

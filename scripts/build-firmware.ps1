@@ -99,7 +99,7 @@ foreach ($envName in $Environment) {
 
 $manifest = [ordered]@{
   name = "RoadLens Scout ESP32 Sensor"
-  version = "0.1.3"
+  version = "0.1.4"
   new_install_prompt_erase = $true
   builds = $builds
 }

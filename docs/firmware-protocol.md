@@ -2,7 +2,7 @@
 
 The ESP32 advertises as `RoadLensESP32`.
 
-Firmware `0.1.3` starts in BLE-first mode: it advertises `RoadLensESP32`
+Firmware `0.1.4` starts in BLE-first mode: it advertises `RoadLensESP32`
 without running Wi-Fi promiscuous scanning, then starts passive Wi-Fi detection
 after the phone connects. On disconnect, Wi-Fi monitor mode is stopped and BLE
 advertising restarts.
@@ -11,9 +11,9 @@ Published browser-flasher builds support ESP32 / ESP32-WROOM / ESP32-WROVER, ESP
 
 BLE service:
 
-- Service: `7d1d0001-52a1-4b81-9fd2-fd7ec3f501000`
-- Notify/read characteristic: `7d1d0002-52a1-4b81-9fd2-fd7ec3f501000`
-- Command/write characteristic: `7d1d0003-52a1-4b81-9fd2-fd7ec3f501000`
+- Service: `7d1d0001-52a1-4b81-9fd2-fd7ec3f50100`
+- Notify/read characteristic: `7d1d0002-52a1-4b81-9fd2-fd7ec3f50100`
+- Command/write characteristic: `7d1d0003-52a1-4b81-9fd2-fd7ec3f50100`
 
 The notify characteristic emits newline-delimited JSON. The same JSON is printed to serial at `115200`.
 

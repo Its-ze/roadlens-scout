@@ -6,9 +6,9 @@
 #include "signatures.h"
 
 static constexpr char DEVICE_NAME[] = "RoadLensESP32";
-static constexpr char SERVICE_UUID[] = "7d1d0001-52a1-4b81-9fd2-fd7ec3f501000";
-static constexpr char NOTIFY_UUID[] = "7d1d0002-52a1-4b81-9fd2-fd7ec3f501000";
-static constexpr char COMMAND_UUID[] = "7d1d0003-52a1-4b81-9fd2-fd7ec3f501000";
+static constexpr char SERVICE_UUID[] = "7d1d0001-52a1-4b81-9fd2-fd7ec3f50100";
+static constexpr char NOTIFY_UUID[] = "7d1d0002-52a1-4b81-9fd2-fd7ec3f50100";
+static constexpr char COMMAND_UUID[] = "7d1d0003-52a1-4b81-9fd2-fd7ec3f50100";
 
 static constexpr uint8_t LED_PIN = 2;
 static constexpr uint32_t CHANNEL_DWELL_MS = 350;
