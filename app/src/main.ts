@@ -92,7 +92,7 @@ let lastPosition: Position | null = null;
 let watchId: string | null = null;
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-  <main class="shell">
+  <main class="shell" data-mobile-tab="map">
     <header class="topbar">
       <div class="brand">
         <img class="brand-mark" src="/brand/roadlens-mark.svg" alt="" />
@@ -157,7 +157,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <button id="statusButton" class="ghost"><i data-lucide="refresh-cw"></i><span>Status</span></button>
         </div>
 
-        <section class="panel-section">
+        <section class="panel-section targets-panel">
           <div class="section-title">
             <h3>Likely Points</h3>
             <span>estimated fixes</span>
@@ -165,7 +165,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <div id="targetList" class="target-list"></div>
         </section>
 
-        <section class="panel-section compact">
+        <section class="panel-section compact signals-panel">
           <div class="section-title">
             <h3>Latest Signals</h3>
             <span>signal feed</span>
@@ -174,11 +174,27 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         </section>
       </aside>
     </section>
+
+    <nav class="bottom-tabs" aria-label="RoadLens mobile sections">
+      <button class="active" data-mobile-tab-target="map" aria-selected="true">
+        <i data-lucide="map"></i><span>Map</span>
+      </button>
+      <button data-mobile-tab-target="targets" aria-selected="false">
+        <i data-lucide="crosshair"></i><span>Targets</span>
+      </button>
+      <button data-mobile-tab-target="signals" aria-selected="false">
+        <i data-lucide="list"></i><span>Signals</span>
+      </button>
+      <button data-mobile-tab-target="actions" aria-selected="false">
+        <i data-lucide="sliders-horizontal"></i><span>Actions</span>
+      </button>
+    </nav>
   </main>
 `;
 
 createIcons({ icons });
 
+const shell = document.querySelector<HTMLElement>('.shell')!;
 const statusText = document.querySelector<HTMLSpanElement>('#statusText')!;
 const statusPill = document.querySelector<HTMLDivElement>('#statusPill')!;
 const mapFocusText = document.querySelector<HTMLElement>('#mapFocusText')!;
@@ -189,6 +205,9 @@ const signalText = document.querySelector<HTMLSpanElement>('#signalText')!;
 const targetSummary = document.querySelector<HTMLParagraphElement>('#targetSummary')!;
 const targetList = document.querySelector<HTMLDivElement>('#targetList')!;
 const feedList = document.querySelector<HTMLDivElement>('#feedList')!;
+const mobileTabButtons = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('[data-mobile-tab-target]'),
+);
 
 document.querySelector<HTMLButtonElement>('#connectButton')!.addEventListener('click', connectSensor);
 document.querySelector<HTMLButtonElement>('#manualButton')!.addEventListener('click', saveManualSpot);
@@ -196,10 +215,28 @@ document.querySelector<HTMLButtonElement>('#updateButton')!.addEventListener('cl
 document.querySelector<HTMLButtonElement>('#exportButton')!.addEventListener('click', exportGeoJson);
 document.querySelector<HTMLButtonElement>('#clearButton')!.addEventListener('click', clearSpots);
 document.querySelector<HTMLButtonElement>('#statusButton')!.addEventListener('click', () => sendCommand('status'));
+mobileTabButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    setMobileTab(button.dataset.mobileTabTarget ?? 'map');
+  });
+});
 
 initMap();
 render();
 void startLocationWatch();
+
+function setMobileTab(tab: string) {
+  shell.dataset.mobileTab = tab;
+  for (const button of mobileTabButtons) {
+    const isActive = button.dataset.mobileTabTarget === tab;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', String(isActive));
+  }
+
+  if (tab === 'map') {
+    window.setTimeout(() => map.invalidateSize(), 160);
+  }
+}
 
 function initMap() {
   map = L.map('map', {

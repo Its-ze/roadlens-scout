@@ -1,4 +1,5 @@
 :root {
+  --mobile-tabs-height: 74px;
   --bg: #0d1216;
   --bg-2: #111820;
   --panel: #162229;
@@ -199,6 +200,10 @@ h1 {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.bottom-tabs {
+  display: none;
 }
 
 .workspace {
@@ -540,20 +545,25 @@ h1 {
 
 @media (max-width: 900px) {
   body {
-    overflow: auto;
+    overflow: hidden;
   }
 
   .shell {
+    height: 100dvh;
     min-height: 100dvh;
-    padding-bottom: calc(88px + env(safe-area-inset-bottom));
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .topbar {
     grid-template-columns: 1fr;
     align-items: stretch;
     gap: 8px;
-    padding: max(10px, env(safe-area-inset-top)) 12px 10px;
+    padding: max(8px, env(safe-area-inset-top)) 12px 8px;
     backdrop-filter: none;
+  }
+
+  .brand {
+    gap: 10px;
   }
 
   .status-pill {
@@ -565,11 +575,11 @@ h1 {
 
   .actions {
     position: fixed;
-    z-index: 1200;
+    z-index: 1300;
     left: 10px;
     right: 10px;
-    bottom: calc(10px + env(safe-area-inset-bottom));
-    display: grid;
+    bottom: calc(var(--mobile-tabs-height) + 14px + env(safe-area-inset-bottom));
+    display: none;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 7px;
     padding: 8px;
@@ -580,19 +590,120 @@ h1 {
     backdrop-filter: blur(18px);
   }
 
+  .shell[data-mobile-tab="actions"] .actions {
+    display: grid;
+  }
+
+  .shell:not([data-mobile-tab="map"]) .map-title,
+  .shell:not([data-mobile-tab="map"]) .telemetry,
+  .shell:not([data-mobile-tab="map"]) .map-wrap .leaflet-control-container {
+    display: none;
+  }
+
   .workspace {
+    min-height: 0;
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(560px, calc(100dvh - 128px)) auto;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .map-wrap,
+  .feed {
+    grid-area: 1 / 1;
   }
 
   .feed {
+    display: none;
+    z-index: 1220;
+    margin: 10px 10px calc(var(--mobile-tabs-height) + 14px + env(safe-area-inset-bottom));
+    grid-template-rows: auto minmax(0, 1fr);
     border-left: 0;
-    border-top: 1px solid rgba(65, 85, 97, 0.68);
-    min-height: 420px;
+    border: 1px solid rgba(65, 85, 97, 0.72);
+    border-radius: 12px;
+    min-height: 0;
+    overflow: hidden;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+  }
+
+  .shell[data-mobile-tab="targets"] .feed,
+  .shell[data-mobile-tab="signals"] .feed {
+    display: grid;
+  }
+
+  .shell[data-mobile-tab="targets"] .signals-panel,
+  .shell[data-mobile-tab="signals"] .targets-panel {
+    display: none;
+  }
+
+  .shell[data-mobile-tab="targets"] .targets-panel,
+  .shell[data-mobile-tab="signals"] .signals-panel {
+    min-height: 0;
+    overflow: auto;
+    border-bottom: 0;
+  }
+
+  .feed-head {
+    padding: 12px;
+  }
+
+  .feed-head .ghost {
+    min-width: 88px;
   }
 
   .map-wrap .leaflet-bottom {
-    bottom: 88px;
+    bottom: calc(var(--mobile-tabs-height) + 18px + env(safe-area-inset-bottom));
+  }
+
+  .map-legend {
+    display: none;
+  }
+
+  .bottom-tabs {
+    position: fixed;
+    z-index: 1400;
+    left: 10px;
+    right: 10px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    min-height: var(--mobile-tabs-height);
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid rgba(65, 85, 97, 0.76);
+    border-radius: 14px;
+    background: rgba(13, 18, 22, 0.94);
+    box-shadow: 0 18px 46px rgba(0, 0, 0, 0.38);
+    backdrop-filter: blur(18px);
+  }
+
+  .bottom-tabs button {
+    min-width: 0;
+    min-height: 56px;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 4px;
+    border-color: transparent;
+    background: transparent;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.05;
+  }
+
+  .bottom-tabs button.active {
+    border-color: rgba(124, 248, 206, 0.32);
+    background: rgba(32, 201, 151, 0.16);
+    color: var(--mint-2);
+  }
+
+  .bottom-tabs button svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .bottom-tabs button span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
@@ -649,7 +760,7 @@ h1 {
   }
 
   .telemetry {
-    top: 78px;
+    top: 76px;
     left: 10px;
     right: 10px;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -667,14 +778,6 @@ h1 {
 
   .telemetry span + span {
     font-size: 10px;
-  }
-
-  .map-legend {
-    left: 10px;
-    right: 10px;
-    bottom: 96px;
-    border-radius: 8px;
-    justify-content: center;
   }
 
   .feed-head,
@@ -696,7 +799,7 @@ h1 {
 
 @media (max-width: 420px) {
   .workspace {
-    grid-template-rows: minmax(590px, calc(100dvh - 110px)) auto;
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .feed-head {
