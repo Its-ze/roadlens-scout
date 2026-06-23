@@ -1,0 +1,13 @@
+app/node_modules/
+app/dist/
+app/android/.gradle/
+app/android/app/build/
+app/android/build/
+app/android/capacitor-cordova-android-plugins/build/
+firmware/.pio/
+web/flasher/.server.pid
+docs/.pages-server.pid
+app/.vite*.pid
+app/.smart-target-test/
+app/vite-preview*.log
+.tooling/

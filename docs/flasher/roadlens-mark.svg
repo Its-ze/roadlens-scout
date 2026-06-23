@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">RoadLens Scout</title>
+  <desc id="desc">A map pin, road line, and lens mark for RoadLens Scout.</desc>
+  <defs>
+    <linearGradient id="bg" x1="36" y1="20" x2="220" y2="236" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#16232a"/>
+      <stop offset="1" stop-color="#0b1014"/>
+    </linearGradient>
+    <linearGradient id="mint" x1="70" y1="54" x2="188" y2="198" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7cf8ce"/>
+      <stop offset="1" stop-color="#20c997"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="72" y1="46" x2="194" y2="204" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffd166"/>
+      <stop offset="1" stop-color="#f77f5f"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <path d="M49 192c27-20 55-31 84-34 28-3 52-13 74-31" fill="none" stroke="#263943" stroke-width="12" stroke-linecap="round"/>
+  <path d="M57 200c27-20 55-31 84-34 28-3 52-13 74-31" fill="none" stroke="#425762" stroke-width="3" stroke-linecap="round" stroke-dasharray="14 16"/>
+  <path d="M128 36c-39 0-70 31-70 69 0 53 70 116 70 116s70-63 70-116c0-38-31-69-70-69Z" fill="url(#mint)"/>
+  <path d="M128 59c-26 0-47 21-47 47s21 47 47 47 47-21 47-47-21-47-47-47Z" fill="#0d151a"/>
+  <path d="M128 77c-16 0-29 13-29 29s13 29 29 29 29-13 29-29-13-29-29-29Z" fill="url(#amber)"/>
+  <path d="M118 91c-6 3-10 9-10 16 0 10 8 18 18 18" fill="none" stroke="#fff8df" stroke-width="7" stroke-linecap="round"/>
+  <path d="M194 68l17-17m-5 39 24-3m-54-34 4-24" fill="none" stroke="#ffd166" stroke-width="8" stroke-linecap="round"/>
+</svg>
