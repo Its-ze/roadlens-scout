@@ -23,7 +23,11 @@ const APP_NAME = 'RoadLens Scout';
 const SENSOR_NAME = 'RoadLensESP32';
 const MAX_STORED_SPOTS = 2000;
 const PHONE_FLASHER_URL = 'https://its-ze.github.io/roadlens-scout/flasher/';
+const SITE_META_URL = 'https://its-ze.github.io/roadlens-scout/site-meta.json';
 const PHONE_BLE_SWEEP_MS = 15000;
+const OTA_CREDENTIAL_CHUNK_BYTES = 6;
+const OTA_HASH_CHUNK_CHARS = 12;
+const OTA_COMMAND_DELAY_MS = 45;
 
 const FLOCK_BLE_PREFIXES = new Set([
   '70:c9:4e', '3c:91:80', 'd8:f3:bc', '80:30:49', 'b8:35:32',
@@ -76,6 +80,17 @@ type RoadLensUsbPlugin = {
 
 const RoadLensUsb = registerPlugin<RoadLensUsbPlugin>('RoadLensUsb');
 
+type RoadLensNetworkPlugin = {
+  getWifiInfo(): Promise<{
+    connected: boolean;
+    ssid?: string;
+    locationPermission?: boolean;
+  }>;
+  openWifiSettings(): Promise<void>;
+};
+
+const RoadLensNetwork = registerPlugin<RoadLensNetworkPlugin>('RoadLensNetwork');
+
 type SensorStatus = {
   type: 'status';
   device?: string;
@@ -92,6 +107,11 @@ type SensorStatus = {
   wildcard_probes?: number;
   candidate_frames?: number;
   queue_drops?: number;
+  firmware_version?: string;
+  chip_family?: string;
+  ota_supported?: boolean;
+  ota_in_progress?: boolean;
+  ota_version?: string;
 };
 
 type DetectionMessage = {
@@ -110,6 +130,15 @@ type DetectionMessage = {
   uptime_ms?: number;
 };
 
+type OtaMessage = {
+  type: 'ota';
+  state: string;
+  detail?: string;
+  progress?: number;
+  version?: string;
+  chip_family?: string;
+};
+
 type GitHubReleaseAsset = {
   name: string;
   browser_download_url: string;
@@ -124,6 +153,20 @@ type GitHubRelease = {
   draft?: boolean;
   prerelease?: boolean;
   assets: GitHubReleaseAsset[];
+};
+
+type SiteMetaFirmwareBuild = {
+  chipFamily: string;
+  path: string;
+  bytes: number;
+  sha256: string;
+};
+
+type SiteMeta = {
+  version: string;
+  firmware: {
+    builds: SiteMetaFirmwareBuild[];
+  };
 };
 
 const decoder = new TextDecoder();
@@ -143,6 +186,10 @@ let usbDevices: RoadLensUsbDevice[] = [];
 let selectedUsbDevice: RoadLensUsbDevice | null = null;
 let phoneBleSweepActive = false;
 let phoneBleSeen = new Map<string, number>();
+let lastSensorStatus: SensorStatus | null = null;
+let latestSiteMeta: SiteMeta | null = null;
+let moduleUpdateBusy = false;
+let moduleUpdatePromptedForVersion = '';
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <main class="shell" data-mobile-tab="map">
@@ -226,6 +273,26 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
               <button id="bleSweepButton"><i data-lucide="radar"></i><span>BLE Sweep</span></button>
             </div>
           </div>
+          <div class="module-card">
+            <div id="moduleStatus" class="module-status">
+              <strong>Sensor firmware</strong>
+              <span>Connect RoadLensESP32</span>
+            </div>
+            <div class="module-fields">
+              <label>
+                <span>SSID</span>
+                <input id="wifiSsidInput" type="text" autocomplete="off" inputmode="text" />
+              </label>
+              <label>
+                <span>Password</span>
+                <input id="wifiPasswordInput" type="password" autocomplete="current-password" />
+              </label>
+            </div>
+            <div class="setup-actions module-actions">
+              <button id="wifiFillButton"><i data-lucide="wifi"></i><span>Wi-Fi</span></button>
+              <button id="moduleOtaButton" class="primary"><i data-lucide="upload-cloud"></i><span>Sensor OTA</span></button>
+            </div>
+          </div>
         </section>
 
         <section class="panel-section targets-panel">
@@ -285,6 +352,11 @@ const usbDeviceCard = document.querySelector<HTMLDivElement>('#usbDeviceCard')!;
 const usbScanButton = document.querySelector<HTMLButtonElement>('#usbScanButton')!;
 const usbFlashButton = document.querySelector<HTMLButtonElement>('#usbFlashButton')!;
 const bleSweepButton = document.querySelector<HTMLButtonElement>('#bleSweepButton')!;
+const moduleStatus = document.querySelector<HTMLDivElement>('#moduleStatus')!;
+const wifiSsidInput = document.querySelector<HTMLInputElement>('#wifiSsidInput')!;
+const wifiPasswordInput = document.querySelector<HTMLInputElement>('#wifiPasswordInput')!;
+const wifiFillButton = document.querySelector<HTMLButtonElement>('#wifiFillButton')!;
+const moduleOtaButton = document.querySelector<HTMLButtonElement>('#moduleOtaButton')!;
 const mobileTabButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-mobile-tab-target]'),
 );
@@ -309,6 +381,12 @@ usbFlashButton.addEventListener('click', () => {
 });
 bleSweepButton.addEventListener('click', () => {
   void runPhoneBleSweep();
+});
+wifiFillButton.addEventListener('click', () => {
+  void loadCurrentWifiSsid();
+});
+moduleOtaButton.addEventListener('click', () => {
+  void runModuleOtaUpdate({ promptBeforeStart: true });
 });
 mobileTabButtons.forEach((button) => {
   button.addEventListener('click', () => {
@@ -366,6 +444,8 @@ async function connectSensor() {
     });
 
     connectedDevice = device;
+    lastSensorStatus = null;
+    moduleUpdatePromptedForVersion = '';
     await BleClient.startNotifications(
       device.deviceId,
       SERVICE_UUID,
@@ -406,8 +486,12 @@ async function disconnectSensor() {
 
 function handleSensorDisconnect() {
   connectedDevice = null;
+  lastSensorStatus = null;
+  moduleUpdateBusy = false;
+  moduleOtaButton.disabled = false;
   notificationBuffer = '';
   setSensorState('offline', 'Sensor disconnected');
+  setModuleState('Sensor firmware', 'Connect RoadLensESP32');
   signalText.textContent = 'Offline';
   updateConnectionButton();
 }
@@ -670,6 +754,13 @@ function setUsbState(summary: string, detail: string) {
   `;
 }
 
+function setModuleState(summary: string, detail: string) {
+  moduleStatus.innerHTML = `
+    <strong>${escapeHtml(summary)}</strong>
+    <span>${escapeHtml(detail)}</span>
+  `;
+}
+
 function toHexId(value: number) {
   return `0x${value.toString(16).padStart(4, '0')}`;
 }
@@ -691,11 +782,13 @@ function handleNotification(value: DataView) {
 
 function handleSensorLine(line: string) {
   try {
-    const message = JSON.parse(line) as SensorStatus | DetectionMessage;
+    const message = JSON.parse(line) as SensorStatus | DetectionMessage | OtaMessage;
     if (message.type === 'status') {
       handleStatus(message);
     } else if (message.type === 'detection') {
       void saveDetection(message);
+    } else if (message.type === 'ota') {
+      handleOtaMessage(message);
     }
   } catch {
     setSensorState('online', line.slice(0, 90));
@@ -703,6 +796,7 @@ function handleSensorLine(line: string) {
 }
 
 function handleStatus(status: SensorStatus) {
+  lastSensorStatus = status;
   const reason = status.reason ? ` ${status.reason}` : '';
   const channel = status.channel ? ` ch${status.channel}` : '';
   setSensorState(status.ble_connected === false ? 'offline' : 'online', `${status.device ?? SENSOR_NAME}${reason}${channel}`);
@@ -723,6 +817,267 @@ function handleStatus(status: SensorStatus) {
         ? `Scanning: ${status.frames_seen} frames, ${candidates} candidates, ${wildcards} wildcard probes`
         : 'Scanning: no 2.4 GHz frames seen yet';
   }
+
+  renderModuleStatus(status);
+  void maybePromptForModuleUpdate(status);
+}
+
+function handleOtaMessage(message: OtaMessage) {
+  const progress =
+    typeof message.progress === 'number' && message.progress >= 0
+      ? ` ${Math.round(message.progress)}%`
+      : '';
+  const detail = `${message.detail ?? message.state}${progress}`;
+  setModuleState(`OTA ${message.state}`, detail);
+  setSensorState(message.state === 'error' ? 'error' : 'busy', detail);
+
+  if (message.state === 'error' || message.state === 'rebooting') {
+    moduleUpdateBusy = false;
+    moduleOtaButton.disabled = false;
+  }
+}
+
+function renderModuleStatus(status: SensorStatus) {
+  const firmware = status.firmware_version ?? 'unknown';
+  const chip = status.chip_family ?? 'unknown chip';
+  if (status.ota_in_progress) {
+    setModuleState('Sensor OTA running', `${chip} firmware ${firmware}`);
+    moduleOtaButton.disabled = true;
+    return;
+  }
+
+  if (status.ota_supported) {
+    const available = latestSiteMeta?.version;
+    if (available && status.firmware_version && compareVersions(available, status.firmware_version) > 0) {
+      setModuleState(`Firmware ${firmware} -> ${available}`, chip);
+      return;
+    }
+    setModuleState(`Firmware ${firmware}`, `${chip} OTA ready`);
+  } else {
+    setModuleState(`Firmware ${firmware}`, `${chip} needs USB flash for OTA`);
+  }
+}
+
+async function maybePromptForModuleUpdate(status: SensorStatus) {
+  if (
+    moduleUpdateBusy ||
+    !connectedDevice ||
+    !status.ota_supported ||
+    !status.firmware_version ||
+    !status.chip_family
+  ) {
+    return;
+  }
+
+  try {
+    const meta = await fetchSiteMeta();
+    const build = pickFirmwareBuild(meta, status.chip_family);
+    if (!build || compareVersions(meta.version, status.firmware_version) <= 0) {
+      renderModuleStatus(status);
+      return;
+    }
+
+    renderModuleStatus(status);
+    if (moduleUpdatePromptedForVersion === meta.version) {
+      return;
+    }
+    moduleUpdatePromptedForVersion = meta.version;
+
+    const ok = confirm(
+      `Update ESP32 sensor firmware ${status.firmware_version} -> ${meta.version} over Wi-Fi?`,
+    );
+    if (ok) {
+      await runModuleOtaUpdate({ meta, status, promptBeforeStart: false });
+    }
+  } catch (error) {
+    setModuleState('Firmware check failed', error instanceof Error ? error.message : 'Update metadata unavailable');
+  }
+}
+
+async function runModuleOtaUpdate(options: {
+  meta?: SiteMeta;
+  status?: SensorStatus;
+  promptBeforeStart: boolean;
+}) {
+  if (moduleUpdateBusy) {
+    return;
+  }
+  if (!connectedDevice) {
+    setModuleState('Sensor offline', 'Connect RoadLensESP32 first');
+    return;
+  }
+
+  const status = options.status ?? lastSensorStatus;
+  if (!status?.ota_supported || !status.firmware_version || !status.chip_family) {
+    setModuleState('USB flash needed', 'Connected firmware does not support OTA yet');
+    return;
+  }
+
+  moduleUpdateBusy = true;
+  moduleOtaButton.disabled = true;
+
+  try {
+    const meta = options.meta ?? (await fetchSiteMeta());
+    const build = pickFirmwareBuild(meta, status.chip_family);
+    if (!build) {
+      throw new Error(`No firmware build for ${status.chip_family}`);
+    }
+
+    if (compareVersions(meta.version, status.firmware_version) <= 0) {
+      setModuleState(`Firmware ${status.firmware_version}`, 'Sensor firmware is current');
+      moduleUpdateBusy = false;
+      moduleOtaButton.disabled = false;
+      return;
+    }
+
+    if (options.promptBeforeStart) {
+      const ok = confirm(
+        `Install ESP32 sensor firmware ${meta.version} over Wi-Fi?\n\n${build.chipFamily} ${formatBytes(build.bytes)}`,
+      );
+      if (!ok) {
+        setModuleState('Sensor OTA canceled', `Firmware ${status.firmware_version}`);
+        moduleUpdateBusy = false;
+        moduleOtaButton.disabled = false;
+        return;
+      }
+    }
+
+    const credentials = await getWifiCredentialsForOta();
+    if (!credentials) {
+      return;
+    }
+
+    setModuleState('Staging OTA', `${build.chipFamily} firmware ${meta.version}`);
+    await sendOtaCommand('oc');
+    await sendOtaCommand(`ov:${meta.version}`);
+    await sendOtaCommand(`oz:${build.bytes}`);
+    await sendChunkedHexCommand('os', credentials.ssid, OTA_CREDENTIAL_CHUNK_BYTES);
+    await sendChunkedHexCommand('op', credentials.password, OTA_CREDENTIAL_CHUNK_BYTES);
+    for (const chunk of chunkText(build.sha256.toLowerCase(), OTA_HASH_CHUNK_CHARS)) {
+      await sendOtaCommand(`oh:${chunk}`);
+    }
+    await sendOtaCommand('ou');
+    setModuleState('OTA queued', `${build.chipFamily} firmware ${meta.version}`);
+  } catch (error) {
+    moduleUpdateBusy = false;
+    moduleOtaButton.disabled = false;
+    setModuleState('Sensor OTA failed', error instanceof Error ? error.message : 'OTA failed');
+  }
+}
+
+async function getWifiCredentialsForOta() {
+  if (!wifiSsidInput.value.trim()) {
+    await loadCurrentWifiSsid();
+  }
+
+  const ssid = wifiSsidInput.value.trim();
+  const password = wifiPasswordInput.value;
+  if (!ssid) {
+    setMobileTab('setup');
+    setModuleState('SSID needed', 'Enter the Wi-Fi name');
+    wifiSsidInput.focus();
+    moduleUpdateBusy = false;
+    moduleOtaButton.disabled = false;
+    return null;
+  }
+
+  const ssidBytes = encoder.encode(ssid);
+  const passwordBytes = encoder.encode(password);
+  if (ssidBytes.length > 32) {
+    throw new Error('Wi-Fi SSID is too long for ESP32');
+  }
+  if (passwordBytes.length > 64) {
+    throw new Error('Wi-Fi password is too long for ESP32');
+  }
+  if (!password && !confirm('Continue OTA with no Wi-Fi password?')) {
+    setMobileTab('setup');
+    wifiPasswordInput.focus();
+    moduleUpdateBusy = false;
+    moduleOtaButton.disabled = false;
+    return null;
+  }
+
+  return { ssid, password };
+}
+
+async function loadCurrentWifiSsid() {
+  setModuleState('Checking Wi-Fi', 'Reading current phone network');
+  try {
+    await startLocationWatch();
+    if (!Capacitor.isNativePlatform()) {
+      setModuleState('SSID unavailable', 'Enter Wi-Fi name manually');
+      return;
+    }
+
+    const info = await RoadLensNetwork.getWifiInfo();
+    if (info.ssid) {
+      wifiSsidInput.value = info.ssid;
+      setModuleState('Wi-Fi selected', info.ssid);
+    } else if (info.connected) {
+      setModuleState('SSID hidden', 'Enter Wi-Fi name manually');
+    } else {
+      setModuleState('Phone not on Wi-Fi', 'Connect phone to Wi-Fi first');
+    }
+  } catch (error) {
+    setModuleState('Wi-Fi check failed', error instanceof Error ? error.message : 'Enter SSID manually');
+  }
+}
+
+async function sendOtaCommand(command: string) {
+  await sendCommand(command);
+  await delay(OTA_COMMAND_DELAY_MS);
+}
+
+async function sendChunkedHexCommand(prefix: string, value: string, chunkBytes: number) {
+  const bytes = encoder.encode(value);
+  for (let index = 0; index < bytes.length; index += chunkBytes) {
+    const chunk = bytes.slice(index, index + chunkBytes);
+    await sendOtaCommand(`${prefix}:${bytesToHex(chunk)}`);
+  }
+}
+
+function bytesToHex(bytes: Uint8Array) {
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function chunkText(value: string, chunkSize: number) {
+  const chunks: string[] = [];
+  for (let index = 0; index < value.length; index += chunkSize) {
+    chunks.push(value.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+async function fetchSiteMeta(): Promise<SiteMeta> {
+  if (latestSiteMeta) {
+    return latestSiteMeta;
+  }
+
+  const response = await fetch(`${SITE_META_URL}?t=${Date.now()}`, {
+    headers: {
+      Accept: 'application/json',
+      'Cache-Control': 'no-cache',
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`RoadLens metadata unavailable (${response.status})`);
+  }
+  latestSiteMeta = (await response.json()) as SiteMeta;
+  return latestSiteMeta;
+}
+
+function pickFirmwareBuild(meta: SiteMeta, chipFamily: string) {
+  const normalized = normalizeChipFamily(chipFamily);
+  return (
+    meta.firmware.builds.find((build) => normalizeChipFamily(build.chipFamily) === normalized) ??
+    null
+  );
+}
+
+function normalizeChipFamily(value: string) {
+  return value.trim().toUpperCase().replace(/_/g, '-');
 }
 
 async function runPhoneBleSweep() {

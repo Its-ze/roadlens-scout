@@ -14,7 +14,7 @@ Current public ESP32 approaches use passive radio observation:
 
 RoadLens Scout implements passive Wi-Fi detection on the ESP32 and phone-side BLE sweep detection in the Android app. The ESP32 reports raw scan counters so a field miss can be separated into "no matching signature" versus "no RF frames seen."
 
-As of `0.1.6`, the ESP32 Wi-Fi detector uses the current 42-prefix public signature set from the OUI-Spy unified Flock-You notes. The Android app's BLE sweep checks those MAC prefixes plus public BLE name patterns and manufacturer ID `0x09C8`.
+As of `0.1.7`, the ESP32 Wi-Fi detector uses the current 42-prefix public signature set from the OUI-Spy unified Flock-You notes. The Android app's BLE sweep checks those MAC prefixes plus public BLE name patterns and manufacturer ID `0x09C8`. Firmware `0.1.7` also adds SHA256-verified sensor OTA from RoadLens Pages after one USB/web flash installs OTA support.
 
 ## Sources checked
 

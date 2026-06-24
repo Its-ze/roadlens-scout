@@ -218,11 +218,15 @@
           </div>
           <div>
             <strong>Wider Wi-Fi sweep</strong>
-            <p>Firmware 0.1.6 scans channels 1-11, matches the current 42-prefix public signature set, and reports raw frame counters back to the app.</p>
+            <p>Firmware 0.1.7 scans channels 1-11, matches the current 42-prefix public signature set, reports raw counters, and enables later in-app Sensor OTA updates.</p>
           </div>
           <div>
             <strong>Phone USB setup</strong>
             <p>The Android app Setup tab detects USB-OTG ESP32 boards and opens this flasher with the selected device context.</p>
+          </div>
+          <div>
+            <strong>Sensor OTA</strong>
+            <p>After this one-time USB/web flash, the Android app can detect outdated sensor firmware and update the ESP32 over Wi-Fi with SHA256 verification.</p>
           </div>
           <div>
             <strong>Phone BLE sweep</strong>

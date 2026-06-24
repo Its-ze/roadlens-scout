@@ -1,9 +1,26 @@
 #include <Arduino.h>
+#include <HTTPClient.h>
 #include <NimBLEDevice.h>
+#include <Update.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <ctype.h>
 #include <esp_wifi.h>
+#include <mbedtls/sha256.h>
 
 #include "signatures.h"
+
+#ifndef ROADLENS_FIRMWARE_VERSION
+#define ROADLENS_FIRMWARE_VERSION "0.1.7"
+#endif
+
+#ifndef ROADLENS_CHIP_FAMILY
+#define ROADLENS_CHIP_FAMILY "ESP32"
+#endif
+
+#ifndef ROADLENS_OTA_URL
+#define ROADLENS_OTA_URL "https://its-ze.github.io/roadlens-scout/flasher/firmware/esp32/firmware.bin"
+#endif
 
 static constexpr char DEVICE_NAME[] = "RoadLensESP32";
 static constexpr char SERVICE_UUID[] = "7d1d0001-52a1-4b81-9fd2-fd7ec3f50100";
@@ -14,6 +31,8 @@ static constexpr uint8_t LED_PIN = 2;
 static constexpr uint32_t CHANNEL_DWELL_MS = 180;
 static constexpr uint32_t DUPLICATE_SUPPRESS_MS = 15000;
 static constexpr uint32_t STATUS_INTERVAL_MS = 5000;
+static constexpr uint32_t OTA_WIFI_TIMEOUT_MS = 25000;
+static constexpr uint32_t OTA_HTTP_IDLE_TIMEOUT_MS = 45000;
 static const uint8_t CHANNELS[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 
 struct DetectionEvent {
@@ -51,9 +70,19 @@ static volatile uint32_t wildcardProbesSeen = 0;
 static volatile uint32_t candidateFramesSeen = 0;
 static volatile uint32_t queueDrops = 0;
 static SeenEntry seenEntries[24] = {};
+static String otaSsid;
+static String otaPassword;
+static String otaExpectedSha256;
+static String otaTargetVersion;
+static uint32_t otaExpectedBytes = 0;
+static bool otaStartRequested = false;
+static bool otaInProgress = false;
+static bool restartPending = false;
+static uint32_t restartAtMs = 0;
 
 static void setupSniffer();
 static void stopSniffer();
+static void performOtaUpdate();
 
 static void formatMac(const uint8_t *mac, char *out, size_t outLen) {
   snprintf(out, outLen, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1],
@@ -80,6 +109,107 @@ static bool wildcardSsidProbe(const uint8_t *payload, uint16_t len,
   }
 
   return false;
+}
+
+static String jsonEscape(const String &value) {
+  String out;
+  out.reserve(value.length() + 8);
+  for (size_t i = 0; i < value.length(); i++) {
+    const char c = value[i];
+    switch (c) {
+      case '\\':
+        out += "\\\\";
+        break;
+      case '"':
+        out += "\\\"";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      default:
+        if (static_cast<uint8_t>(c) < 0x20) {
+          char escaped[7];
+          snprintf(escaped, sizeof(escaped), "\\u%04x", c);
+          out += escaped;
+        } else {
+          out += c;
+        }
+        break;
+    }
+  }
+  return out;
+}
+
+static int hexNibble(char c) {
+  if (c >= '0' && c <= '9') {
+    return c - '0';
+  }
+  if (c >= 'a' && c <= 'f') {
+    return c - 'a' + 10;
+  }
+  if (c >= 'A' && c <= 'F') {
+    return c - 'A' + 10;
+  }
+  return -1;
+}
+
+static bool appendHexBytes(String &target, const String &hexChunk,
+                           size_t maxBytes) {
+  if ((hexChunk.length() % 2) != 0 ||
+      target.length() + (hexChunk.length() / 2) > maxBytes) {
+    return false;
+  }
+
+  for (size_t i = 0; i < hexChunk.length(); i += 2) {
+    const int hi = hexNibble(hexChunk[i]);
+    const int lo = hexNibble(hexChunk[i + 1]);
+    if (hi < 0 || lo < 0) {
+      return false;
+    }
+    target += static_cast<char>((hi << 4) | lo);
+  }
+  return true;
+}
+
+static bool appendHexText(String &target, const String &chunk,
+                          size_t maxChars) {
+  if (target.length() + chunk.length() > maxChars) {
+    return false;
+  }
+
+  for (size_t i = 0; i < chunk.length(); i++) {
+    if (hexNibble(chunk[i]) < 0) {
+      return false;
+    }
+    target += static_cast<char>(tolower(chunk[i]));
+  }
+  return true;
+}
+
+static String sha256Hex(const uint8_t *hash) {
+  static const char hex[] = "0123456789abcdef";
+  String out;
+  out.reserve(64);
+  for (size_t i = 0; i < 32; i++) {
+    out += hex[(hash[i] >> 4) & 0x0f];
+    out += hex[hash[i] & 0x0f];
+  }
+  return out;
+}
+
+static void resetOtaConfig() {
+  otaSsid = "";
+  otaPassword = "";
+  otaExpectedSha256 = "";
+  otaTargetVersion = "";
+  otaExpectedBytes = 0;
+  otaStartRequested = false;
 }
 
 static bool shouldSuppress(const uint8_t *mac, const char *role,
@@ -217,8 +347,20 @@ static void emitLine(const String &line) {
   }
 }
 
+static void emitOtaStatus(const char *state, const String &detail,
+                          int progress = -1) {
+  const String escapedDetail = jsonEscape(detail);
+  char json[384];
+  snprintf(json, sizeof(json),
+           "{\"type\":\"ota\",\"state\":\"%s\",\"detail\":\"%s\","
+           "\"progress\":%d,\"version\":\"%s\",\"chip_family\":\"%s\"}\n",
+           state, escapedDetail.c_str(), progress, ROADLENS_FIRMWARE_VERSION,
+           ROADLENS_CHIP_FAMILY);
+  emitLine(String(json));
+}
+
 static void emitStatus(const char *reason) {
-  char json[480];
+  char json[700];
   snprintf(json, sizeof(json),
            "{\"type\":\"status\",\"device\":\"%s\",\"reason\":\"%s\","
            "\"uptime_ms\":%lu,\"channel\":%u,\"detections\":%lu,"
@@ -226,7 +368,9 @@ static void emitStatus(const char *reason) {
            "\"sniffer_active\":%s,\"frames_seen\":%lu,"
            "\"mgmt_frames\":%lu,\"data_frames\":%lu,"
            "\"wildcard_probes\":%lu,\"candidate_frames\":%lu,"
-           "\"queue_drops\":%lu}\n",
+           "\"queue_drops\":%lu,\"firmware_version\":\"%s\","
+           "\"chip_family\":\"%s\",\"ota_supported\":true,"
+           "\"ota_in_progress\":%s,\"ota_version\":\"%s\"}\n",
            DEVICE_NAME, reason, static_cast<unsigned long>(millis()),
            CHANNELS[channelIndex], static_cast<unsigned long>(detectionCount),
            static_cast<unsigned>(FLOCK_WIFI_OUI_COUNT),
@@ -237,7 +381,9 @@ static void emitStatus(const char *reason) {
            static_cast<unsigned long>(dataFramesSeen),
            static_cast<unsigned long>(wildcardProbesSeen),
            static_cast<unsigned long>(candidateFramesSeen),
-           static_cast<unsigned long>(queueDrops));
+           static_cast<unsigned long>(queueDrops), ROADLENS_FIRMWARE_VERSION,
+           ROADLENS_CHIP_FAMILY, otaInProgress ? "true" : "false",
+           otaTargetVersion.c_str());
   emitLine(String(json));
 }
 
@@ -276,6 +422,238 @@ class ServerCallbacks : public NimBLEServerCallbacks {
   }
 };
 
+static bool processOtaCommand(const String &command, const String &lowerCommand) {
+  if (lowerCommand == "oc" || lowerCommand == "ota-clear") {
+    resetOtaConfig();
+    emitOtaStatus("ready", "OTA fields cleared");
+    return true;
+  }
+
+  if (lowerCommand.startsWith("os:")) {
+    if (!appendHexBytes(otaSsid, command.substring(3), 32)) {
+      emitOtaStatus("error", "Invalid SSID chunk");
+    } else {
+      emitOtaStatus("staging", "SSID received");
+    }
+    return true;
+  }
+
+  if (lowerCommand.startsWith("op:")) {
+    if (!appendHexBytes(otaPassword, command.substring(3), 64)) {
+      emitOtaStatus("error", "Invalid password chunk");
+    } else {
+      emitOtaStatus("staging", "Password received");
+    }
+    return true;
+  }
+
+  if (lowerCommand.startsWith("oh:")) {
+    if (!appendHexText(otaExpectedSha256, command.substring(3), 64)) {
+      emitOtaStatus("error", "Invalid SHA-256 chunk");
+    } else {
+      emitOtaStatus("staging", "Hash received");
+    }
+    return true;
+  }
+
+  if (lowerCommand.startsWith("ov:")) {
+    otaTargetVersion = command.substring(3);
+    otaTargetVersion.trim();
+    if (otaTargetVersion.length() > 24) {
+      otaTargetVersion = otaTargetVersion.substring(0, 24);
+    }
+    emitOtaStatus("staging", "Target version received");
+    return true;
+  }
+
+  if (lowerCommand.startsWith("oz:")) {
+    otaExpectedBytes = static_cast<uint32_t>(command.substring(3).toInt());
+    emitOtaStatus("staging", "Size received");
+    return true;
+  }
+
+  if (lowerCommand == "ou" || lowerCommand == "ota-start") {
+    if (otaSsid.length() == 0) {
+      emitOtaStatus("error", "Missing Wi-Fi SSID");
+      return true;
+    }
+    if (otaExpectedSha256.length() != 64) {
+      emitOtaStatus("error", "Missing firmware SHA-256");
+      return true;
+    }
+    if (otaExpectedBytes == 0) {
+      emitOtaStatus("error", "Missing firmware size");
+      return true;
+    }
+    if (otaInProgress) {
+      emitOtaStatus("busy", "OTA already running");
+      return true;
+    }
+
+    otaStartRequested = true;
+    emitOtaStatus("queued", "OTA queued");
+    return true;
+  }
+
+  return false;
+}
+
+static void performOtaUpdate() {
+  otaStartRequested = false;
+  otaInProgress = true;
+  stopSniffer();
+  emitOtaStatus("wifi", "Joining Wi-Fi", 2);
+
+  HTTPClient http;
+  WiFiClientSecure client;
+  mbedtls_sha256_context shaContext;
+  bool shaInitialized = false;
+  bool shaStarted = false;
+  String failure;
+  size_t written = 0;
+  int lastProgress = -1;
+  uint32_t lastReadMs = millis();
+  uint8_t hash[32] = {};
+
+  if (!String(ROADLENS_OTA_URL).startsWith("https://its-ze.github.io/roadlens-scout/")) {
+    failure = "Firmware URL is not RoadLens Pages";
+    goto ota_cleanup;
+  }
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true, false);
+  delay(150);
+  WiFi.begin(otaSsid.c_str(), otaPassword.c_str());
+
+  {
+    const uint32_t startedMs = millis();
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - startedMs < OTA_WIFI_TIMEOUT_MS) {
+      delay(250);
+    }
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    failure = "Wi-Fi join timed out";
+    goto ota_cleanup;
+  }
+
+  emitOtaStatus("download", "Downloading firmware", 8);
+  client.setInsecure();
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setTimeout(15000);
+  if (!http.begin(client, ROADLENS_OTA_URL)) {
+    failure = "Could not open firmware URL";
+    goto ota_cleanup;
+  }
+
+  {
+    const int httpCode = http.GET();
+    if (httpCode != HTTP_CODE_OK) {
+      failure = "Firmware download HTTP " + String(httpCode);
+      goto ota_cleanup;
+    }
+  }
+
+  {
+    const int contentLength = http.getSize();
+    if (contentLength <= 0) {
+      failure = "Firmware size is unknown";
+      goto ota_cleanup;
+    }
+    if (static_cast<uint32_t>(contentLength) != otaExpectedBytes) {
+      failure = "Firmware size mismatch";
+      goto ota_cleanup;
+    }
+    if (!Update.begin(contentLength)) {
+      failure = "OTA partition is not ready";
+      goto ota_cleanup;
+    }
+
+    mbedtls_sha256_init(&shaContext);
+    shaInitialized = true;
+    if (mbedtls_sha256_starts_ret(&shaContext, 0) != 0) {
+      failure = "SHA-256 setup failed";
+      goto ota_cleanup;
+    }
+    shaStarted = true;
+
+    WiFiClient *stream = http.getStreamPtr();
+    uint8_t buffer[2048];
+    while (written < static_cast<size_t>(contentLength)) {
+      const size_t available = stream->available();
+      if (available == 0) {
+        if (millis() - lastReadMs > OTA_HTTP_IDLE_TIMEOUT_MS) {
+          failure = "Firmware download stalled";
+          goto ota_cleanup;
+        }
+        delay(10);
+        continue;
+      }
+
+      const size_t wanted = min(available, sizeof(buffer));
+      const int read = stream->readBytes(buffer, wanted);
+      if (read <= 0) {
+        delay(2);
+        continue;
+      }
+
+      lastReadMs = millis();
+      mbedtls_sha256_update_ret(&shaContext, buffer, read);
+      if (Update.write(buffer, read) != static_cast<size_t>(read)) {
+        failure = "Flash write failed";
+        goto ota_cleanup;
+      }
+
+      written += static_cast<size_t>(read);
+      const int progress = static_cast<int>((written * 100) / contentLength);
+      if (progress >= lastProgress + 10 || progress >= 99) {
+        lastProgress = progress;
+        emitOtaStatus("download", "Downloading firmware", progress);
+      }
+      delay(1);
+    }
+  }
+
+  if (shaStarted && mbedtls_sha256_finish_ret(&shaContext, hash) != 0) {
+    failure = "SHA-256 finish failed";
+    goto ota_cleanup;
+  }
+  shaStarted = false;
+
+  if (!sha256Hex(hash).equalsIgnoreCase(otaExpectedSha256)) {
+    failure = "Firmware SHA-256 mismatch";
+    goto ota_cleanup;
+  }
+
+  emitOtaStatus("verify", "Firmware hash verified", 100);
+  if (!Update.end(true)) {
+    failure = "OTA finalize failed";
+    goto ota_cleanup;
+  }
+
+  emitOtaStatus("rebooting", "Firmware installed; rebooting", 100);
+  restartPending = true;
+  restartAtMs = millis() + 1200;
+
+ota_cleanup:
+  if (shaInitialized) {
+    mbedtls_sha256_free(&shaContext);
+  }
+  if (failure.length() > 0) {
+    Update.abort();
+    emitOtaStatus("error", failure);
+  }
+  http.end();
+  WiFi.disconnect(true, false);
+  WiFi.mode(WIFI_OFF);
+  resetOtaConfig();
+  otaInProgress = false;
+  if (failure.length() > 0 && bleConnected) {
+    setupSniffer();
+  }
+}
+
 class CommandCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic *characteristic) override {
     std::string value = characteristic->getValue();
@@ -285,13 +663,14 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
 
     String command(value.c_str());
     command.trim();
-    command.toLowerCase();
+    String lowerCommand = command;
+    lowerCommand.toLowerCase();
 
-    if (command == "ping") {
+    if (lowerCommand == "ping") {
       emitStatus("pong");
-    } else if (command == "status") {
+    } else if (lowerCommand == "status") {
       emitStatus("command");
-    } else if (command == "reset-counts") {
+    } else if (lowerCommand == "reset-counts") {
       detectionCount = 0;
       wifiFramesSeen = 0;
       mgmtFramesSeen = 0;
@@ -301,6 +680,8 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
       queueDrops = 0;
       memset(seenEntries, 0, sizeof(seenEntries));
       emitStatus("counts-reset");
+    } else if (processOtaCommand(command, lowerCommand)) {
+      return;
     } else {
       emitStatus("unknown-command");
     }
@@ -377,6 +758,14 @@ void setup() {
 
 void loop() {
   const uint32_t nowMs = millis();
+
+  if (restartPending && static_cast<int32_t>(nowMs - restartAtMs) >= 0) {
+    ESP.restart();
+  }
+
+  if (otaStartRequested && !otaInProgress) {
+    performOtaUpdate();
+  }
 
   if (wifiSnifferActive && nowMs - lastChannelHopMs >= CHANNEL_DWELL_MS) {
     channelIndex = (channelIndex + 1) % (sizeof(CHANNELS) / sizeof(CHANNELS[0]));

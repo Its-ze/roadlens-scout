@@ -427,10 +427,74 @@ h1 {
   overflow-wrap: anywhere;
 }
 
+.module-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(65, 85, 97, 0.64);
+  border-radius: 8px;
+  background: rgba(17, 24, 32, 0.72);
+  padding: 11px;
+}
+
+.module-status {
+  display: grid;
+  gap: 4px;
+}
+
+.module-status strong {
+  font-size: 14px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.module-status span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.module-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.module-fields label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  color: var(--subtle);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.module-fields input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(13, 18, 22, 0.9);
+  color: var(--text);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.module-fields input:focus {
+  border-color: var(--mint);
+  outline: 2px solid rgba(32, 201, 151, 0.16);
+}
+
 .setup-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.module-actions {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
 }
 
 .target-list,

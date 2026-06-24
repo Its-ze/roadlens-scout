@@ -9,6 +9,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(RoadLensUpdaterPlugin.class);
         registerPlugin(RoadLensUsbPlugin.class);
+        registerPlugin(RoadLensNetworkPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

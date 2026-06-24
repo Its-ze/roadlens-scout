@@ -409,7 +409,7 @@
             <p class="muted">
               Auto-detected ESP32-family sensor firmware, Android APK, checksums, and release metadata in one Pages-ready package.
               This firmware advertises over BLE first, then starts passive detection after the phone connects.
-              The Android app can also run a phone-side BLE sweep for compatible name, manufacturer, and prefix matches.
+              The Android app can also run a phone-side BLE sweep and update OTA-capable sensors over Wi-Fi.
             </p>
 
             <div class="actions">
@@ -429,11 +429,15 @@
               </div>
               <div>
                 <strong>Wider Wi-Fi sweep</strong>
-                <span>Firmware scans channels 1-11 and matches the current 42-prefix public signature set.</span>
+                <span>Firmware scans channels 1-11, reports counters, and matches the current 42-prefix set.</span>
               </div>
               <div>
                 <strong>Phone USB setup</strong>
                 <span>The APK Setup tab detects a plugged-in ESP32 and opens the matching RoadLens flasher.</span>
+              </div>
+              <div>
+                <strong>Sensor OTA</strong>
+                <span>After one USB/web flash, the app can detect and update outdated sensor firmware over Wi-Fi.</span>
               </div>
               <div>
                 <strong>Phone BLE sweep</strong>

@@ -58,7 +58,7 @@ USB upload:
 Replace `COM15` with the live ESP32 port.
 
 After flashing, reset or power-cycle the board and look for the BLE device name
-`RoadLensESP32` from the Android app. Firmware `0.1.6` keeps Wi-Fi monitor mode
+`RoadLensESP32` from the Android app. Firmware `0.1.7` keeps Wi-Fi monitor mode
 off until the phone connects, so the ESP32 advertises over Bluetooth first and
 then starts passive detection after the app is linked. It scans 2.4 GHz channels
 1-11, reports raw frame counters in app status, and matches the current 42-prefix
@@ -106,6 +106,20 @@ context. After flashing, return to the app and use `Connect` to link to
 The `Setup` tab also has `BLE Sweep`. It runs a short phone-side BLE scan for
 known Flock-style BLE names, manufacturer IDs, and MAC prefixes, then saves any
 matches to the same GPS-tagged map as ESP32 Wi-Fi hits.
+
+### Sensor OTA Updates
+
+Firmware `0.1.7` adds in-app ESP32 firmware updates after the board has been
+flashed once by USB or the web flasher. When the app connects to a sensor, it
+reads the sensor firmware version and chip family, checks RoadLens Pages
+metadata, and prompts if a newer matching firmware build is available.
+
+Android cannot expose the phone's saved Wi-Fi password to apps. The Setup tab
+can request location/Wi-Fi access to prefill the current SSID when Android
+allows it, but the Wi-Fi password must be typed into the app. The app sends the
+SSID/password and expected firmware SHA256 to the ESP32 over BLE using compact
+staged commands; the ESP32 joins Wi-Fi, downloads its chip-specific firmware
+from RoadLens Pages, verifies SHA256, writes OTA flash, and reboots.
 
 ## In-App GitHub Updates
 
