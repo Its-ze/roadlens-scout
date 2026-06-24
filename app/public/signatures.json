@@ -1,0 +1,363 @@
+{
+    "schema":  1,
+    "name":  "RoadLens Scout Detection Signatures",
+    "version":  "2026.06.24.209126de",
+    "generatedAt":  "2026-06-24T12:37:13Z",
+    "sources":  [
+                    {
+                        "name":  "Flock-You Wi-Fi OUI research",
+                        "url":  "https://raw.githubusercontent.com/colonelpanichacks/flock-you/HEAD/datasets/NitekryDPaul_wifi_ouis.md",
+                        "kind":  "wifi",
+                        "retrievedAt":  "2026-06-24T12:37:13Z",
+                        "ok":  true,
+                        "prefixes":  30,
+                        "names":  1,
+                        "manufacturerIds":  0,
+                        "ravenServiceUuids":  0
+                    },
+                    {
+                        "name":  "OUI-Spy Unified Blue README",
+                        "url":  "https://raw.githubusercontent.com/colonelpanichacks/oui-spy-unified-blue/HEAD/README.md",
+                        "kind":  "ble-notes",
+                        "retrievedAt":  "2026-06-24T12:37:13Z",
+                        "ok":  true,
+                        "prefixes":  1,
+                        "names":  4,
+                        "manufacturerIds":  1,
+                        "ravenServiceUuids":  0
+                    },
+                    {
+                        "name":  "OUI-Spy Unified Blue Flock-You source",
+                        "url":  "https://raw.githubusercontent.com/colonelpanichacks/oui-spy-unified-blue/HEAD/src/raw/flockyou.cpp",
+                        "kind":  "ble-source",
+                        "retrievedAt":  "2026-06-24T12:37:13Z",
+                        "ok":  true,
+                        "prefixes":  42,
+                        "names":  4,
+                        "manufacturerIds":  1,
+                        "ravenServiceUuids":  8
+                    }
+                ],
+    "wifiPrefixes":  [
+                         {
+                             "prefix":  "70:c9:4e",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "3c:91:80",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "d8:f3:bc",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "80:30:49",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "b8:35:32",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "14:5a:fc",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "74:4c:a1",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "08:3a:88",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "9c:2f:9d",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "c0:35:32",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "94:08:53",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "e4:aa:ea",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "f4:6a:dd",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "24:b2:b9",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "00:f4:8d",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "d0:39:57",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "e8:d0:fc",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "e0:4f:43",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "b8:1e:a4",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "70:08:94",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "58:8e:81",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "ec:1b:bd",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "3c:71:bf",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "58:00:e3",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "90:35:ea",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "5c:93:a2",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "64:6e:69",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "48:27:ea",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "a4:cf:12",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "04:0d:84",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "f0:82:c0",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "1c:34:f1",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "38:5b:44",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "94:34:69",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "b4:e3:f9",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "b4:1e:52",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "14:b5:cd",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "94:2a:6f",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "f4:e2:c6",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "d4:11:d6",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "e0:0a:f6",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
+                             "prefix":  "82:6b:f2",
+                             "label":  "flock-wifi-wildcard",
+                             "allowLocalAdministered":  true,
+                             "wildcardProbe":  true
+                         }
+                     ],
+    "blePrefixes":  [
+                        "70:c9:4e",
+                        "3c:91:80",
+                        "d8:f3:bc",
+                        "80:30:49",
+                        "b8:35:32",
+                        "14:5a:fc",
+                        "74:4c:a1",
+                        "08:3a:88",
+                        "9c:2f:9d",
+                        "c0:35:32",
+                        "94:08:53",
+                        "e4:aa:ea",
+                        "f4:6a:dd",
+                        "24:b2:b9",
+                        "00:f4:8d",
+                        "d0:39:57",
+                        "e8:d0:fc",
+                        "e0:4f:43",
+                        "b8:1e:a4",
+                        "70:08:94",
+                        "58:8e:81",
+                        "ec:1b:bd",
+                        "3c:71:bf",
+                        "58:00:e3",
+                        "90:35:ea",
+                        "5c:93:a2",
+                        "64:6e:69",
+                        "48:27:ea",
+                        "a4:cf:12",
+                        "04:0d:84",
+                        "f0:82:c0",
+                        "1c:34:f1",
+                        "38:5b:44",
+                        "94:34:69",
+                        "b4:e3:f9",
+                        "b4:1e:52",
+                        "14:b5:cd",
+                        "94:2a:6f",
+                        "f4:e2:c6",
+                        "d4:11:d6",
+                        "e0:0a:f6",
+                        "82:6b:f2"
+                    ],
+    "bleNamePatterns":  [
+                            "FS Ext Battery",
+                            "Penguin",
+                            "Flock",
+                            "Pigvision"
+                        ],
+    "bleManufacturerIds":  [
+                               2504
+                           ],
+    "ravenServiceUuids":  [
+                              "0000180a-0000-1000-8000-00805f9b34fb",
+                              "00003100-0000-1000-8000-00805f9b34fb",
+                              "00003200-0000-1000-8000-00805f9b34fb",
+                              "00003300-0000-1000-8000-00805f9b34fb",
+                              "00003400-0000-1000-8000-00805f9b34fb",
+                              "00003500-0000-1000-8000-00805f9b34fb",
+                              "00001809-0000-1000-8000-00805f9b34fb",
+                              "00001819-0000-1000-8000-00805f9b34fb"
+                          ],
+    "removedPrefixes":  [
+                            "00:0c:e7",
+                            "cc:cc:cc",
+                            "f8:a2:d6"
+                        ]
+}

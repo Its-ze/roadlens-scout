@@ -70,7 +70,7 @@ inline bool isLocalAdministeredMac(const uint8_t *mac) {
   return (mac[0] & 0x02) != 0;
 }
 
-inline const OuiSignature *matchFlockOui(const uint8_t *mac) {
+inline const OuiSignature *matchStaticFlockOui(const uint8_t *mac) {
   if (isMulticastMac(mac)) {
     return nullptr;
   }

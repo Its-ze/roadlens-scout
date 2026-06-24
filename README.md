@@ -10,7 +10,8 @@ The app keeps raw sightings and also computes smart likely points. When repeat s
 - `app/` - Capacitor Android app source.
 - `web/flasher/` - local ESP Web Tools flasher page.
 - `assets/brand/` - shared RoadLens logo source.
-- `scripts/` - build, flash, preview, and APK helper scripts.
+- `scripts/` - build, flash, preview, APK, and signature-feed helper scripts.
+- `data/signatures.json` - generated Wi-Fi/BLE detection signature feed.
 - `docs/` - research notes and BLE/serial protocol.
 
 ## Branding Assets
@@ -58,11 +59,12 @@ USB upload:
 Replace `COM15` with the live ESP32 port.
 
 After flashing, reset or power-cycle the board and look for the BLE device name
-`RoadLensESP32` from the Android app. Firmware `0.1.7` keeps Wi-Fi monitor mode
+`RoadLensESP32` from the Android app. Firmware `0.1.8` keeps Wi-Fi monitor mode
 off until the phone connects, so the ESP32 advertises over Bluetooth first and
 then starts passive detection after the app is linked. It scans 2.4 GHz channels
-1-11, reports raw frame counters in app status, and matches the current 42-prefix
-public Flock Wi-Fi signature set.
+1-11, reports raw frame counters in app status, and matches the current public
+Flock-style Wi-Fi signature feed. The app can sync newer signature feeds into
+v0.1.8+ sensors over BLE, and the ESP32 stores the synced feed locally.
 
 For a specific USB-upload target:
 
@@ -104,12 +106,13 @@ context. After flashing, return to the app and use `Connect` to link to
 `RoadLensESP32`; while linked, the same button becomes `Disconnect`.
 
 The `Setup` tab also has `BLE Sweep`. It runs a short phone-side BLE scan for
-known Flock-style BLE names, manufacturer IDs, and MAC prefixes, then saves any
-matches to the same GPS-tagged map as ESP32 Wi-Fi hits.
+known Flock-style BLE names, manufacturer IDs, MAC prefixes, and Raven service
+UUIDs from the active signature feed, then saves any matches to the same
+GPS-tagged map as ESP32 Wi-Fi hits.
 
 ### Sensor OTA Updates
 
-Firmware `0.1.7` adds in-app ESP32 firmware updates after the board has been
+Firmware `0.1.8` supports in-app ESP32 firmware updates after the board has been
 flashed once by USB or the web flasher. When the app connects to a sensor, it
 reads the sensor firmware version and chip family, checks RoadLens Pages
 metadata, and prompts if a newer matching firmware build is available.
@@ -120,6 +123,29 @@ allows it, but the Wi-Fi password must be typed into the app. The app sends the
 SSID/password and expected firmware SHA256 to the ESP32 over BLE using compact
 staged commands; the ESP32 joins Wi-Fi, downloads its chip-specific firmware
 from RoadLens Pages, verifies SHA256, writes OTA flash, and reboots.
+
+### Detection Signature Updates
+
+RoadLens keeps the public detection list as a generated feed instead of only
+hard-coding it in firmware:
+
+```powershell
+.\scripts\update-signatures.ps1
+```
+
+That script pulls the public Flock-You/OUI-Spy research files, merges the Wi-Fi
+prefixes, BLE name patterns, manufacturer ID, and Raven service UUIDs, omits
+known false-positive prefixes, and writes:
+
+- `data/signatures.json`
+- `app/public/signatures.json`
+- `docs/signatures.json` during `.\scripts\build-pages.ps1`
+
+`.github/workflows/update-signatures.yml` also runs the updater every day and
+commits only when the generated feed changes. The Android app loads the bundled
+feed, tries the latest Pages feed when online, caches the last good feed in
+local storage, and syncs the Wi-Fi prefix table into v0.1.8+ sensors when they
+connect.
 
 ## In-App GitHub Updates
 
@@ -152,13 +178,14 @@ The `docs/` folder is a Pages-ready static site. It includes:
 - Root page with auto-detected ESP32-family flashing and `Download APK` buttons.
 - ESP Web Tools flasher copied to `docs/flasher/`.
 - Android APK metadata and download link pointed at the matching GitHub release asset.
-- `docs/site-meta.json` and `docs/downloads/checksums.txt`, including per-chip firmware hashes.
+- `docs/signatures.json`, `docs/site-meta.json`, and `docs/downloads/checksums.txt`, including per-chip firmware hashes and signature-feed metadata.
 
 Refresh Pages artifacts after firmware or APK changes:
 
 ```powershell
 .\scripts\build-firmware.ps1
 .\scripts\build-apk.ps1
+.\scripts\update-signatures.ps1
 .\scripts\build-pages.ps1
 ```
 

@@ -21,10 +21,11 @@ $DocsFlasher = Join-Path $DocsDir "flasher"
 $DocsDownloads = Join-Path $DocsDir "downloads"
 $DocsAssets = Join-Path $DocsDir "assets"
 $BrandMark = Join-Path $Root "assets\brand\roadlens-mark.svg"
+$SignatureSource = Join-Path $Root "data\signatures.json"
 $ApkName = "roadlens-scout-v$Version-debug.apk"
 $ApkReleaseUrl = "https://github.com/Its-ze/roadlens-scout/releases/download/v$Version/$ApkName"
 
-foreach ($required in @($FlasherSource, (Join-Path $FlasherSource "manifest.json"), (Join-Path $FlasherSource "firmware"), $ApkPath, $BrandMark)) {
+foreach ($required in @($FlasherSource, (Join-Path $FlasherSource "manifest.json"), (Join-Path $FlasherSource "firmware"), $ApkPath, $BrandMark, $SignatureSource)) {
   if (-not (Test-Path -LiteralPath $required)) {
     throw "Missing required Pages artifact: $required"
   }
@@ -36,9 +37,14 @@ New-Item -ItemType Directory -Force -Path $DocsFlasher | Out-Null
 Copy-Item -Path (Join-Path $FlasherSource "*") -Destination $DocsFlasher -Recurse -Force
 Remove-Item -LiteralPath (Join-Path $DocsFlasher ".server.pid") -Force -ErrorAction SilentlyContinue
 Copy-Item -LiteralPath $BrandMark -Destination (Join-Path $DocsAssets "roadlens-mark.svg") -Force
+Copy-Item -LiteralPath $SignatureSource -Destination (Join-Path $DocsDir "signatures.json") -Force
 
 $apkHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ApkPath).Hash.ToLowerInvariant()
 $apkItem = Get-Item -LiteralPath $ApkPath
+$signaturePath = Join-Path $DocsDir "signatures.json"
+$signatureItem = Get-Item -LiteralPath $signaturePath
+$signatureHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $signaturePath).Hash.ToLowerInvariant()
+$signatureFeed = Get-Content -LiteralPath $signaturePath -Raw | ConvertFrom-Json
 $manifestPath = Join-Path $DocsFlasher "manifest.json"
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $firmwareFiles = Get-ChildItem -LiteralPath (Join-Path $DocsFlasher "firmware") -Filter "*.bin" -Recurse |
@@ -73,6 +79,7 @@ if (-not $primaryFirmware) {
 }
 
 $checksumLines = @("$apkHash  $ApkReleaseUrl")
+$checksumLines += "$signatureHash  signatures.json"
 foreach ($file in $firmwareFiles) {
   $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
   $relative = $file.FullName.Substring($DocsDir.Length + 1).Replace('\', '/')
@@ -97,6 +104,17 @@ $meta = [ordered]@{
     bytes = $primaryFirmware.bytes
     sha256 = $primaryFirmware.sha256
     builds = $firmwareBuilds
+  }
+  signatures = [ordered]@{
+    path = "signatures.json"
+    version = [string]$signatureFeed.version
+    bytes = $signatureItem.Length
+    sha256 = $signatureHash
+    wifiPrefixes = @($signatureFeed.wifiPrefixes).Count
+    blePrefixes = @($signatureFeed.blePrefixes).Count
+    bleNamePatterns = @($signatureFeed.bleNamePatterns).Count
+    bleManufacturerIds = @($signatureFeed.bleManufacturerIds).Count
+    ravenServiceUuids = @($signatureFeed.ravenServiceUuids).Count
   }
 }
 

@@ -24,12 +24,16 @@ const SENSOR_NAME = 'RoadLensESP32';
 const MAX_STORED_SPOTS = 2000;
 const PHONE_FLASHER_URL = 'https://its-ze.github.io/roadlens-scout/flasher/';
 const SITE_META_URL = 'https://its-ze.github.io/roadlens-scout/site-meta.json';
+const SIGNATURE_FEED_URL = 'https://its-ze.github.io/roadlens-scout/signatures.json';
+const SIGNATURE_CACHE_KEY = 'roadlens.signatures.v1';
 const PHONE_BLE_SWEEP_MS = 15000;
 const OTA_CREDENTIAL_CHUNK_BYTES = 6;
 const OTA_HASH_CHUNK_CHARS = 12;
 const OTA_COMMAND_DELAY_MS = 45;
+const SIGNATURE_COMMAND_DELAY_MS = 35;
+const MAX_SENSOR_SIGNATURE_PREFIXES = 96;
 
-const FLOCK_BLE_PREFIXES = new Set([
+const DEFAULT_WIFI_PREFIXES = [
   '70:c9:4e', '3c:91:80', 'd8:f3:bc', '80:30:49', 'b8:35:32',
   '14:5a:fc', '74:4c:a1', '08:3a:88', '9c:2f:9d', 'c0:35:32',
   '94:08:53', 'e4:aa:ea', 'f4:6a:dd', '24:b2:b9', '00:f4:8d',
@@ -39,9 +43,19 @@ const FLOCK_BLE_PREFIXES = new Set([
   'f0:82:c0', '1c:34:f1', '38:5b:44', '94:34:69', 'b4:e3:f9',
   'b4:1e:52', '14:b5:cd', '94:2a:6f', 'f4:e2:c6', 'd4:11:d6',
   'e0:0a:f6', '82:6b:f2',
-]);
-const FLOCK_BLE_NAME_PATTERNS = ['fs ext battery', 'penguin', 'flock', 'pigvision'];
-const FLOCK_BLE_MANUFACTURER_IDS = new Set([0x09c8]);
+];
+const DEFAULT_BLE_NAME_PATTERNS = ['FS Ext Battery', 'Penguin', 'Flock', 'Pigvision'];
+const DEFAULT_BLE_MANUFACTURER_IDS = [0x09c8];
+const DEFAULT_RAVEN_SERVICE_UUIDS = [
+  '0000180a-0000-1000-8000-00805f9b34fb',
+  '00003100-0000-1000-8000-00805f9b34fb',
+  '00003200-0000-1000-8000-00805f9b34fb',
+  '00003300-0000-1000-8000-00805f9b34fb',
+  '00003400-0000-1000-8000-00805f9b34fb',
+  '00003500-0000-1000-8000-00805f9b34fb',
+  '00001809-0000-1000-8000-00805f9b34fb',
+  '00001819-0000-1000-8000-00805f9b34fb',
+];
 
 type RoadLensUpdaterPlugin = {
   canInstallPackages(): Promise<{ allowed: boolean }>;
@@ -112,6 +126,9 @@ type SensorStatus = {
   ota_supported?: boolean;
   ota_in_progress?: boolean;
   ota_version?: string;
+  signature_version?: string;
+  signature_source?: string;
+  signature_sync_supported?: boolean;
 };
 
 type DetectionMessage = {
@@ -137,6 +154,14 @@ type OtaMessage = {
   progress?: number;
   version?: string;
   chip_family?: string;
+};
+
+type SignatureMessage = {
+  type: 'signatures';
+  state: string;
+  detail?: string;
+  count?: number;
+  version?: string;
 };
 
 type GitHubReleaseAsset = {
@@ -167,6 +192,50 @@ type SiteMeta = {
   firmware: {
     builds: SiteMetaFirmwareBuild[];
   };
+  signatures?: {
+    path: string;
+    version: string;
+    bytes: number;
+    sha256: string;
+    wifiPrefixes: number;
+    blePrefixes: number;
+    bleNamePatterns: number;
+    bleManufacturerIds: number;
+    ravenServiceUuids?: number;
+  };
+};
+
+type SignaturePrefix = {
+  prefix: string;
+  label?: string;
+  allowLocalAdministered?: boolean;
+  wildcardProbe?: boolean;
+};
+
+type SignatureSource = {
+  name?: string;
+  url?: string;
+  ok?: boolean;
+};
+
+type SignatureFeed = {
+  schema: number;
+  name?: string;
+  version: string;
+  generatedAt?: string;
+  sources?: SignatureSource[];
+  wifiPrefixes: SignaturePrefix[];
+  blePrefixes: string[];
+  bleNamePatterns: string[];
+  bleManufacturerIds: number[];
+  ravenServiceUuids: string[];
+};
+
+type SignatureIndex = {
+  blePrefixes: Set<string>;
+  bleNamePatterns: string[];
+  bleManufacturerIds: Set<number>;
+  ravenServiceUuids: Set<string>;
 };
 
 const decoder = new TextDecoder();
@@ -190,6 +259,11 @@ let lastSensorStatus: SensorStatus | null = null;
 let latestSiteMeta: SiteMeta | null = null;
 let moduleUpdateBusy = false;
 let moduleUpdatePromptedForVersion = '';
+let activeSignatures: SignatureFeed = readCachedSignatureFeed() ?? buildDefaultSignatureFeed();
+let signatureIndex: SignatureIndex = buildSignatureIndex(activeSignatures);
+let signatureFetchPromise: Promise<SignatureFeed> | null = null;
+let signatureSyncBusy = false;
+let signatureSyncedForKey = '';
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <main class="shell" data-mobile-tab="map">
@@ -398,6 +472,7 @@ initMap();
 renderUsbSetup();
 render();
 void startLocationWatch();
+void refreshSignatureFeed({ quiet: true });
 
 function setMobileTab(tab: string) {
   shell.dataset.mobileTab = tab;
@@ -446,6 +521,7 @@ async function connectSensor() {
     connectedDevice = device;
     lastSensorStatus = null;
     moduleUpdatePromptedForVersion = '';
+    signatureSyncedForKey = '';
     await BleClient.startNotifications(
       device.deviceId,
       SERVICE_UUID,
@@ -488,6 +564,8 @@ function handleSensorDisconnect() {
   connectedDevice = null;
   lastSensorStatus = null;
   moduleUpdateBusy = false;
+  signatureSyncBusy = false;
+  signatureSyncedForKey = '';
   moduleOtaButton.disabled = false;
   notificationBuffer = '';
   setSensorState('offline', 'Sensor disconnected');
@@ -782,13 +860,15 @@ function handleNotification(value: DataView) {
 
 function handleSensorLine(line: string) {
   try {
-    const message = JSON.parse(line) as SensorStatus | DetectionMessage | OtaMessage;
+    const message = JSON.parse(line) as SensorStatus | DetectionMessage | OtaMessage | SignatureMessage;
     if (message.type === 'status') {
       handleStatus(message);
     } else if (message.type === 'detection') {
       void saveDetection(message);
     } else if (message.type === 'ota') {
       handleOtaMessage(message);
+    } else if (message.type === 'signatures') {
+      handleSignatureMessage(message);
     }
   } catch {
     setSensorState('online', line.slice(0, 90));
@@ -820,6 +900,13 @@ function handleStatus(status: SensorStatus) {
 
   renderModuleStatus(status);
   void maybePromptForModuleUpdate(status);
+  void maybeSyncSensorSignatures(status);
+}
+
+function handleSignatureMessage(message: SignatureMessage) {
+  const count = typeof message.count === 'number' ? `${message.count} prefixes` : 'signature feed';
+  const version = message.version ? ` ${message.version}` : '';
+  setModuleState(`Signatures ${message.state}`, `${count}${version}`);
 }
 
 function handleOtaMessage(message: OtaMessage) {
@@ -840,6 +927,10 @@ function handleOtaMessage(message: OtaMessage) {
 function renderModuleStatus(status: SensorStatus) {
   const firmware = status.firmware_version ?? 'unknown';
   const chip = status.chip_family ?? 'unknown chip';
+  const signatureDetail =
+    typeof status.signature_count === 'number'
+      ? `${status.signature_count} signatures`
+      : `${activeSignatures.wifiPrefixes.length} app signatures`;
   if (status.ota_in_progress) {
     setModuleState('Sensor OTA running', `${chip} firmware ${firmware}`);
     moduleOtaButton.disabled = true;
@@ -849,10 +940,10 @@ function renderModuleStatus(status: SensorStatus) {
   if (status.ota_supported) {
     const available = latestSiteMeta?.version;
     if (available && status.firmware_version && compareVersions(available, status.firmware_version) > 0) {
-      setModuleState(`Firmware ${firmware} -> ${available}`, chip);
+      setModuleState(`Firmware ${firmware} -> ${available}`, `${chip} | ${signatureDetail}`);
       return;
     }
-    setModuleState(`Firmware ${firmware}`, `${chip} OTA ready`);
+    setModuleState(`Firmware ${firmware}`, `${chip} OTA ready | ${signatureDetail}`);
   } else {
     setModuleState(`Firmware ${firmware}`, `${chip} needs USB flash for OTA`);
   }
@@ -1080,6 +1171,282 @@ function normalizeChipFamily(value: string) {
   return value.trim().toUpperCase().replace(/_/g, '-');
 }
 
+function buildDefaultSignatureFeed(): SignatureFeed {
+  return {
+    schema: 1,
+    name: 'RoadLens Scout Built-In Signatures',
+    version: `builtin-${APP_VERSION}`,
+    wifiPrefixes: DEFAULT_WIFI_PREFIXES.map((prefix) => ({
+      prefix,
+      label: prefix === '82:6b:f2' ? 'flock-wifi-wildcard' : 'flock-wifi',
+      allowLocalAdministered: isLocalAdministeredPrefix(prefix),
+      wildcardProbe: prefix === '82:6b:f2',
+    })),
+    blePrefixes: [...DEFAULT_WIFI_PREFIXES],
+    bleNamePatterns: [...DEFAULT_BLE_NAME_PATTERNS],
+    bleManufacturerIds: [...DEFAULT_BLE_MANUFACTURER_IDS],
+    ravenServiceUuids: [...DEFAULT_RAVEN_SERVICE_UUIDS],
+  };
+}
+
+function readCachedSignatureFeed() {
+  try {
+    const raw = localStorage.getItem(SIGNATURE_CACHE_KEY);
+    if (!raw) {
+      return null;
+    }
+    return normalizeSignatureFeed(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+function activateSignatureFeed(feed: SignatureFeed, cache: boolean) {
+  activeSignatures = feed;
+  signatureIndex = buildSignatureIndex(feed);
+  if (cache) {
+    try {
+      localStorage.setItem(SIGNATURE_CACHE_KEY, JSON.stringify(feed));
+    } catch {
+      // Cache is best effort; the bundled fallback still works offline.
+    }
+  }
+}
+
+function buildSignatureIndex(feed: SignatureFeed): SignatureIndex {
+  return {
+    blePrefixes: new Set(feed.blePrefixes.map((prefix) => normalizePrefix(prefix)).filter(Boolean) as string[]),
+    bleNamePatterns: feed.bleNamePatterns.map((name) => name.toLowerCase()),
+    bleManufacturerIds: new Set(feed.bleManufacturerIds),
+    ravenServiceUuids: new Set(feed.ravenServiceUuids.map((uuid) => uuid.toLowerCase())),
+  };
+}
+
+async function refreshSignatureFeed(options: { quiet?: boolean } = {}): Promise<SignatureFeed> {
+  if (signatureFetchPromise) {
+    return signatureFetchPromise;
+  }
+
+  signatureFetchPromise = (async () => {
+    const cacheBust = Date.now();
+    const candidates = [
+      `${SIGNATURE_FEED_URL}?t=${cacheBust}`,
+      `/signatures.json?t=${cacheBust}`,
+    ];
+
+    let lastError: unknown = null;
+    for (const url of candidates) {
+      try {
+        const response = await fetch(url, {
+          cache: 'no-store',
+          headers: {
+            Accept: 'application/json',
+            'Cache-Control': 'no-cache',
+          },
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const feed = normalizeSignatureFeed(await response.json());
+        activateSignatureFeed(feed, true);
+        if (!options.quiet) {
+          setUsbState('Signatures updated', `${feed.wifiPrefixes.length} Wi-Fi prefixes`);
+        }
+        return feed;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!options.quiet) {
+      setUsbState('Signature refresh failed', lastError instanceof Error ? lastError.message : 'Using cached list');
+    }
+    return activeSignatures;
+  })();
+
+  try {
+    return await signatureFetchPromise;
+  } finally {
+    signatureFetchPromise = null;
+  }
+}
+
+function normalizeSignatureFeed(raw: unknown): SignatureFeed {
+  const value = raw as Partial<SignatureFeed> | null;
+  if (!value || typeof value !== 'object') {
+    throw new Error('Invalid signature feed');
+  }
+
+  const wifiPrefixes = normalizeWifiPrefixes(value.wifiPrefixes);
+  if (wifiPrefixes.length < 30) {
+    throw new Error('Signature feed has too few Wi-Fi prefixes');
+  }
+
+  const blePrefixValues =
+    Array.isArray(value.blePrefixes) && value.blePrefixes.length
+      ? value.blePrefixes
+      : wifiPrefixes.map((item) => item.prefix);
+  const blePrefixes = dedupeStrings(blePrefixValues.map((item) => normalizePrefix(String(item))).filter(Boolean) as string[]);
+  const bleNamePatterns = dedupeStrings(
+    (Array.isArray(value.bleNamePatterns) ? value.bleNamePatterns : DEFAULT_BLE_NAME_PATTERNS)
+      .map((name) => String(name).trim())
+      .filter(Boolean),
+  );
+  const bleManufacturerIds = dedupeNumbers(
+    (Array.isArray(value.bleManufacturerIds) ? value.bleManufacturerIds : DEFAULT_BLE_MANUFACTURER_IDS)
+      .map((item) => parseManufacturerId(item))
+      .filter((item): item is number => item != null),
+  );
+  const ravenServiceUuids = dedupeStrings(
+    (Array.isArray(value.ravenServiceUuids) ? value.ravenServiceUuids : DEFAULT_RAVEN_SERVICE_UUIDS)
+      .map((uuid) => normalizeUuid(String(uuid)))
+      .filter(Boolean) as string[],
+  );
+
+  return {
+    schema: Number(value.schema) || 1,
+    name: value.name,
+    version: typeof value.version === 'string' && value.version.trim() ? value.version.trim() : 'unknown',
+    generatedAt: value.generatedAt,
+    sources: value.sources,
+    wifiPrefixes,
+    blePrefixes,
+    bleNamePatterns,
+    bleManufacturerIds,
+    ravenServiceUuids,
+  };
+}
+
+function normalizeWifiPrefixes(raw: unknown): SignaturePrefix[] {
+  const source = Array.isArray(raw) ? raw : [];
+  const seen = new Set<string>();
+  const out: SignaturePrefix[] = [];
+
+  for (const item of source) {
+    const candidate =
+      typeof item === 'string'
+        ? { prefix: item }
+        : (item as Partial<SignaturePrefix> | null);
+    if (!candidate || typeof candidate !== 'object') {
+      continue;
+    }
+    const prefix = normalizePrefix(String(candidate.prefix ?? ''));
+    if (!prefix || seen.has(prefix)) {
+      continue;
+    }
+    seen.add(prefix);
+    out.push({
+      prefix,
+      label: typeof candidate.label === 'string' ? candidate.label : 'flock-wifi',
+      allowLocalAdministered:
+        Boolean(candidate.allowLocalAdministered) || Boolean(candidate.wildcardProbe) || isLocalAdministeredPrefix(prefix),
+      wildcardProbe: Boolean(candidate.wildcardProbe),
+    });
+  }
+
+  return out;
+}
+
+function normalizePrefix(value: string) {
+  const hex = value.replace(/[^0-9a-f]/gi, '').toLowerCase();
+  if (hex.length !== 6) {
+    return null;
+  }
+  return hex.match(/.{1,2}/g)?.join(':') ?? null;
+}
+
+function normalizeUuid(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(normalized)
+    ? normalized
+    : null;
+}
+
+function parseManufacturerId(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = value.trim().toLowerCase().startsWith('0x')
+      ? Number.parseInt(value.trim().slice(2), 16)
+      : Number.parseInt(value.trim(), 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function dedupeStrings(values: string[]) {
+  return Array.from(new Set(values));
+}
+
+function dedupeNumbers(values: number[]) {
+  return Array.from(new Set(values));
+}
+
+function isLocalAdministeredPrefix(prefix: string) {
+  const firstByte = Number.parseInt(prefix.slice(0, 2), 16);
+  return Number.isFinite(firstByte) && (firstByte & 0x02) !== 0;
+}
+
+async function maybeSyncSensorSignatures(status: SensorStatus) {
+  if (
+    signatureSyncBusy ||
+    !connectedDevice ||
+    !status.signature_sync_supported ||
+    status.ota_in_progress
+  ) {
+    return;
+  }
+
+  const feed = await refreshSignatureFeed({ quiet: true });
+  const targetVersion = compactSignatureVersion(feed.version);
+  const targetCount = feed.wifiPrefixes.length;
+  if (status.signature_version === targetVersion && status.signature_count === targetCount) {
+    return;
+  }
+
+  const syncKey = `${connectedDevice.deviceId}:${targetVersion}:${targetCount}`;
+  if (signatureSyncedForKey === syncKey) {
+    return;
+  }
+
+  signatureSyncBusy = true;
+  try {
+    await syncSensorSignatures(feed, targetVersion);
+    signatureSyncedForKey = syncKey;
+  } catch (error) {
+    setModuleState('Signature sync failed', error instanceof Error ? error.message : 'Using sensor list');
+  } finally {
+    signatureSyncBusy = false;
+  }
+}
+
+async function syncSensorSignatures(feed: SignatureFeed, targetVersion: string) {
+  if (feed.wifiPrefixes.length > MAX_SENSOR_SIGNATURE_PREFIXES) {
+    throw new Error(`Signature feed has ${feed.wifiPrefixes.length} prefixes; firmware limit is ${MAX_SENSOR_SIGNATURE_PREFIXES}`);
+  }
+
+  setModuleState('Syncing signatures', `${feed.wifiPrefixes.length} Wi-Fi prefixes`);
+  await sendSensorStagedCommand('sc');
+  await sendSensorStagedCommand(`sv:${targetVersion}`);
+  for (const item of feed.wifiPrefixes) {
+    const compactPrefix = item.prefix.replace(/:/g, '');
+    const allowLocal = item.allowLocalAdministered || item.wildcardProbe || isLocalAdministeredPrefix(item.prefix);
+    await sendSensorStagedCommand(`sp:${compactPrefix}:${allowLocal ? 1 : 0}`);
+  }
+  await sendSensorStagedCommand('sf');
+}
+
+async function sendSensorStagedCommand(command: string) {
+  await sendCommand(command);
+  await delay(SIGNATURE_COMMAND_DELAY_MS);
+}
+
+function compactSignatureVersion(version: string) {
+  const compact = version.replace(/[^0-9A-Za-z._-]/g, '').slice(0, 24);
+  return compact || 'synced';
+}
+
 async function runPhoneBleSweep() {
   if (phoneBleSweepActive) {
     return;
@@ -1092,8 +1459,12 @@ async function runPhoneBleSweep() {
 
   try {
     await startLocationWatch();
+    await refreshSignatureFeed({ quiet: true });
     await BleClient.initialize({ androidNeverForLocation: false });
-    setUsbState('BLE sweep running', 'Scanning phone BLE for 15 seconds');
+    setUsbState(
+      'BLE sweep running',
+      `${signatureIndex.blePrefixes.size} prefixes for 15 seconds`,
+    );
 
     await BleClient.requestLEScan(
       {
@@ -1156,8 +1527,9 @@ function classifyPhoneBleResult(result: ScanResult) {
   const mac = normalizeMac(result.device.deviceId) ?? result.device.deviceId ?? 'unknown-ble';
   const prefix = mac.length >= 8 ? mac.slice(0, 8).toLowerCase() : '';
   const manufacturerId = firstManufacturerId(result);
+  const advertisedUuid = scanResultUuids(result).find((uuid) => signatureIndex.ravenServiceUuids.has(uuid));
 
-  if (manufacturerId != null && FLOCK_BLE_MANUFACTURER_IDS.has(manufacturerId)) {
+  if (manufacturerId != null && signatureIndex.bleManufacturerIds.has(manufacturerId)) {
     return {
       mac,
       method: 'ble-mfr',
@@ -1166,7 +1538,16 @@ function classifyPhoneBleResult(result: ScanResult) {
     };
   }
 
-  const namePattern = FLOCK_BLE_NAME_PATTERNS.find((pattern) => lowerName.includes(pattern));
+  if (advertisedUuid) {
+    return {
+      mac,
+      method: 'ble-service',
+      label: 'raven-ble-service',
+      confidence: 94,
+    };
+  }
+
+  const namePattern = signatureIndex.bleNamePatterns.find((pattern) => lowerName.includes(pattern));
   if (namePattern) {
     return {
       mac,
@@ -1176,7 +1557,7 @@ function classifyPhoneBleResult(result: ScanResult) {
     };
   }
 
-  if (prefix && FLOCK_BLE_PREFIXES.has(prefix)) {
+  if (prefix && signatureIndex.blePrefixes.has(prefix)) {
     return {
       mac,
       method: 'ble-oui',
@@ -1186,6 +1567,15 @@ function classifyPhoneBleResult(result: ScanResult) {
   }
 
   return null;
+}
+
+function scanResultUuids(result: ScanResult) {
+  return [
+    ...(result.uuids ?? []),
+    ...(result.device.uuids ?? []),
+  ]
+    .map((uuid) => normalizeUuid(uuid))
+    .filter((uuid): uuid is string => Boolean(uuid));
 }
 
 function firstManufacturerId(result: ScanResult) {

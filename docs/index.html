@@ -409,7 +409,7 @@
             <p class="muted">
               Auto-detected ESP32-family sensor firmware, Android APK, checksums, and release metadata in one Pages-ready package.
               This firmware advertises over BLE first, then starts passive detection after the phone connects.
-              The Android app can also run a phone-side BLE sweep and update OTA-capable sensors over Wi-Fi.
+              The Android app can also refresh detection signatures, run a phone-side BLE sweep, and update OTA-capable sensors over Wi-Fi.
             </p>
 
             <div class="actions">
@@ -429,7 +429,7 @@
               </div>
               <div>
                 <strong>Wider Wi-Fi sweep</strong>
-                <span>Firmware scans channels 1-11, reports counters, and matches the current 42-prefix set.</span>
+                <span>Firmware scans channels 1-11, reports counters, and can use app-synced signature feeds.</span>
               </div>
               <div>
                 <strong>Phone USB setup</strong>
@@ -440,8 +440,8 @@
                 <span>After one USB/web flash, the app can detect and update outdated sensor firmware over Wi-Fi.</span>
               </div>
               <div>
-                <strong>Phone BLE sweep</strong>
-                <span>The APK can scan BLE names, manufacturer IDs, and known prefixes from the phone.</span>
+                <strong>Auto-refresh signatures</strong>
+                <span>The APK caches the latest public feed and syncs Wi-Fi prefixes to v0.1.8+ sensors.</span>
               </div>
               <div class="warn">
                 <strong>No working phone sensor build</strong>
@@ -480,6 +480,10 @@
               <strong>Firmware Builds</strong>
               <span id="firmwareBuilds">loading</span>
             </div>
+            <div>
+              <strong>Signature Feed</strong>
+              <span id="signatureFeed">loading</span>
+            </div>
           </div>
         </aside>
       </section>
@@ -487,6 +491,7 @@
       <nav class="links" aria-label="Project files">
         <a href="downloads/checksums.txt">Checksums</a>
         <a href="site-meta.json">Site Metadata</a>
+        <a href="signatures.json">Signatures</a>
         <a href="firmware-protocol.md">Protocol</a>
       </nav>
     </main>
@@ -509,11 +514,18 @@
           document.getElementById("firmwareBuilds").textContent = builds.length
             ? builds.map((build) => build.chipFamily).join(", ")
             : "ESP32";
+          if (meta.signatures) {
+            document.getElementById("signatureFeed").textContent =
+              `${meta.signatures.version} | ${meta.signatures.wifiPrefixes} Wi-Fi / ${meta.signatures.ravenServiceUuids || 0} Raven`;
+          } else {
+            document.getElementById("signatureFeed").textContent = "metadata unavailable";
+          }
         })
         .catch(() => {
           document.getElementById("apkHash").textContent = "metadata unavailable";
           document.getElementById("firmwareHash").textContent = "metadata unavailable";
           document.getElementById("firmwareBuilds").textContent = "metadata unavailable";
+          document.getElementById("signatureFeed").textContent = "metadata unavailable";
         });
     </script>
   </body>

@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <NimBLEDevice.h>
+#include <Preferences.h>
 #include <Update.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -11,7 +12,7 @@
 #include "signatures.h"
 
 #ifndef ROADLENS_FIRMWARE_VERSION
-#define ROADLENS_FIRMWARE_VERSION "0.1.7"
+#define ROADLENS_FIRMWARE_VERSION "0.1.8"
 #endif
 
 #ifndef ROADLENS_CHIP_FAMILY
@@ -33,6 +34,7 @@ static constexpr uint32_t DUPLICATE_SUPPRESS_MS = 15000;
 static constexpr uint32_t STATUS_INTERVAL_MS = 5000;
 static constexpr uint32_t OTA_WIFI_TIMEOUT_MS = 25000;
 static constexpr uint32_t OTA_HTTP_IDLE_TIMEOUT_MS = 45000;
+static constexpr size_t MAX_DYNAMIC_SIGNATURES = 96;
 static const uint8_t CHANNELS[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 
 struct DetectionEvent {
@@ -79,10 +81,18 @@ static bool otaStartRequested = false;
 static bool otaInProgress = false;
 static bool restartPending = false;
 static uint32_t restartAtMs = 0;
+static OuiSignature dynamicSignatures[MAX_DYNAMIC_SIGNATURES] = {};
+static OuiSignature stagedSignatures[MAX_DYNAMIC_SIGNATURES] = {};
+static size_t dynamicSignatureCount = 0;
+static size_t stagedSignatureCount = 0;
+static char dynamicSignatureVersion[25] = "";
+static char stagedSignatureVersion[25] = "";
+static bool signatureApplyRequested = false;
 
 static void setupSniffer();
 static void stopSniffer();
 static void performOtaUpdate();
+static void applyStagedSignatures();
 
 static void formatMac(const uint8_t *mac, char *out, size_t outLen) {
   snprintf(out, outLen, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1],
@@ -212,6 +222,138 @@ static void resetOtaConfig() {
   otaStartRequested = false;
 }
 
+static bool parseCompactPrefix(const String &value, uint8_t *out) {
+  if (value.length() != 6) {
+    return false;
+  }
+
+  for (size_t i = 0; i < 3; i++) {
+    const int hi = hexNibble(value[i * 2]);
+    const int lo = hexNibble(value[i * 2 + 1]);
+    if (hi < 0 || lo < 0) {
+      return false;
+    }
+    out[i] = static_cast<uint8_t>((hi << 4) | lo);
+  }
+  return true;
+}
+
+static bool signatureEntryEquals(const OuiSignature &signature, const uint8_t *prefix) {
+  return signature.bytes[0] == prefix[0] && signature.bytes[1] == prefix[1] &&
+         signature.bytes[2] == prefix[2];
+}
+
+static void resetStagedSignatures() {
+  stagedSignatureCount = 0;
+  stagedSignatureVersion[0] = '\0';
+  memset(stagedSignatures, 0, sizeof(stagedSignatures));
+}
+
+static size_t activeSignatureCount() {
+  return dynamicSignatureCount > 0 ? dynamicSignatureCount : FLOCK_WIFI_OUI_COUNT;
+}
+
+static const char *activeSignatureVersion() {
+  return dynamicSignatureCount > 0 && dynamicSignatureVersion[0] != '\0'
+             ? dynamicSignatureVersion
+             : "builtin";
+}
+
+static const char *activeSignatureSource() {
+  return dynamicSignatureCount > 0 ? "synced" : "builtin";
+}
+
+static String encodeDynamicSignatureSet() {
+  static const char hex[] = "0123456789abcdef";
+  String encoded;
+  encoded.reserve(dynamicSignatureCount * 8);
+  for (size_t i = 0; i < dynamicSignatureCount; i++) {
+    if (i > 0) {
+      encoded += ",";
+    }
+    const OuiSignature &signature = dynamicSignatures[i];
+    for (size_t j = 0; j < 3; j++) {
+      encoded += hex[(signature.bytes[j] >> 4) & 0x0f];
+      encoded += hex[signature.bytes[j] & 0x0f];
+    }
+    encoded += signature.allowLocalAdministered ? "1" : "0";
+  }
+  return encoded;
+}
+
+static void saveDynamicSignatures() {
+  Preferences prefs;
+  if (!prefs.begin("roadlens", false)) {
+    return;
+  }
+  prefs.putString("sigver", dynamicSignatureVersion);
+  prefs.putString("sigset", encodeDynamicSignatureSet());
+  prefs.end();
+}
+
+static void loadDynamicSignatures() {
+  Preferences prefs;
+  if (!prefs.begin("roadlens", true)) {
+    return;
+  }
+
+  const String version = prefs.getString("sigver", "");
+  const String encoded = prefs.getString("sigset", "");
+  prefs.end();
+
+  if (encoded.length() == 0) {
+    return;
+  }
+
+  size_t count = 0;
+  int start = 0;
+  while (start < static_cast<int>(encoded.length()) && count < MAX_DYNAMIC_SIGNATURES) {
+    int comma = encoded.indexOf(',', start);
+    if (comma < 0) {
+      comma = encoded.length();
+    }
+    String token = encoded.substring(start, comma);
+    token.trim();
+    if (token.length() == 7) {
+      uint8_t prefix[3] = {};
+      if (parseCompactPrefix(token.substring(0, 6), prefix)) {
+        OuiSignature &slot = dynamicSignatures[count++];
+        memcpy(slot.bytes, prefix, sizeof(slot.bytes));
+        slot.allowLocalAdministered = token[6] == '1';
+        slot.label = slot.allowLocalAdministered ? "flock-wifi-wildcard" : "flock-wifi";
+      }
+    }
+    start = comma + 1;
+  }
+
+  if (count > 0) {
+    dynamicSignatureCount = count;
+    strlcpy(dynamicSignatureVersion, version.c_str(), sizeof(dynamicSignatureVersion));
+  }
+}
+
+static const OuiSignature *matchActiveFlockOui(const uint8_t *mac) {
+  if (isMulticastMac(mac)) {
+    return nullptr;
+  }
+
+  if (dynamicSignatureCount > 0) {
+    for (size_t i = 0; i < dynamicSignatureCount; i++) {
+      const OuiSignature *signature = &dynamicSignatures[i];
+      if (mac[0] == signature->bytes[0] && mac[1] == signature->bytes[1] &&
+          mac[2] == signature->bytes[2]) {
+        if (isLocalAdministeredMac(mac) && !signature->allowLocalAdministered) {
+          return nullptr;
+        }
+        return signature;
+      }
+    }
+    return nullptr;
+  }
+
+  return matchStaticFlockOui(mac);
+}
+
 static bool shouldSuppress(const uint8_t *mac, const char *role,
                            uint32_t nowMs) {
   int oldestIndex = 0;
@@ -319,7 +461,7 @@ static void snifferCallback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
   auto inspectAddress = [&](const uint8_t *addr, const char *role,
                             bool wildcardForRole) {
-    const OuiSignature *signature = matchFlockOui(addr);
+    const OuiSignature *signature = matchActiveFlockOui(addr);
     if (signature) {
       candidateFramesSeen++;
     }
@@ -359,8 +501,20 @@ static void emitOtaStatus(const char *state, const String &detail,
   emitLine(String(json));
 }
 
+static void emitSignatureStatus(const char *state, const String &detail,
+                                size_t count) {
+  const String escapedDetail = jsonEscape(detail);
+  char json[384];
+  snprintf(json, sizeof(json),
+           "{\"type\":\"signatures\",\"state\":\"%s\",\"detail\":\"%s\","
+           "\"count\":%u,\"version\":\"%s\"}\n",
+           state, escapedDetail.c_str(), static_cast<unsigned>(count),
+           activeSignatureVersion());
+  emitLine(String(json));
+}
+
 static void emitStatus(const char *reason) {
-  char json[700];
+  char json[900];
   snprintf(json, sizeof(json),
            "{\"type\":\"status\",\"device\":\"%s\",\"reason\":\"%s\","
            "\"uptime_ms\":%lu,\"channel\":%u,\"detections\":%lu,"
@@ -370,10 +524,12 @@ static void emitStatus(const char *reason) {
            "\"wildcard_probes\":%lu,\"candidate_frames\":%lu,"
            "\"queue_drops\":%lu,\"firmware_version\":\"%s\","
            "\"chip_family\":\"%s\",\"ota_supported\":true,"
-           "\"ota_in_progress\":%s,\"ota_version\":\"%s\"}\n",
+           "\"ota_in_progress\":%s,\"ota_version\":\"%s\","
+           "\"signature_version\":\"%s\",\"signature_source\":\"%s\","
+           "\"signature_sync_supported\":true}\n",
            DEVICE_NAME, reason, static_cast<unsigned long>(millis()),
            CHANNELS[channelIndex], static_cast<unsigned long>(detectionCount),
-           static_cast<unsigned>(FLOCK_WIFI_OUI_COUNT),
+           static_cast<unsigned>(activeSignatureCount()),
            bleConnected ? "true" : "false",
            wifiSnifferActive ? "true" : "false",
            static_cast<unsigned long>(wifiFramesSeen),
@@ -383,7 +539,8 @@ static void emitStatus(const char *reason) {
            static_cast<unsigned long>(candidateFramesSeen),
            static_cast<unsigned long>(queueDrops), ROADLENS_FIRMWARE_VERSION,
            ROADLENS_CHIP_FAMILY, otaInProgress ? "true" : "false",
-           otaTargetVersion.c_str());
+           otaTargetVersion.c_str(), activeSignatureVersion(),
+           activeSignatureSource());
   emitLine(String(json));
 }
 
@@ -496,6 +653,109 @@ static bool processOtaCommand(const String &command, const String &lowerCommand)
   }
 
   return false;
+}
+
+static bool processSignatureCommand(const String &command,
+                                    const String &lowerCommand) {
+  if (lowerCommand == "sc" || lowerCommand == "signatures-clear") {
+    resetStagedSignatures();
+    emitSignatureStatus("ready", "Signature staging cleared", stagedSignatureCount);
+    return true;
+  }
+
+  if (lowerCommand.startsWith("sv:")) {
+    String version = command.substring(3);
+    version.trim();
+    if (version.length() > 24) {
+      version = version.substring(0, 24);
+    }
+    strlcpy(stagedSignatureVersion, version.c_str(), sizeof(stagedSignatureVersion));
+    emitSignatureStatus("staging", "Signature version received",
+                        stagedSignatureCount);
+    return true;
+  }
+
+  if (lowerCommand.startsWith("sp:")) {
+    if (stagedSignatureCount >= MAX_DYNAMIC_SIGNATURES) {
+      emitSignatureStatus("error", "Signature staging table full",
+                          stagedSignatureCount);
+      return true;
+    }
+
+    const String payload = lowerCommand.substring(3);
+    const int separator = payload.indexOf(':');
+    if (separator != 6) {
+      emitSignatureStatus("error", "Invalid signature prefix",
+                          stagedSignatureCount);
+      return true;
+    }
+
+    uint8_t prefix[3] = {};
+    if (!parseCompactPrefix(payload.substring(0, 6), prefix)) {
+      emitSignatureStatus("error", "Invalid signature hex",
+                          stagedSignatureCount);
+      return true;
+    }
+
+    for (size_t i = 0; i < stagedSignatureCount; i++) {
+      if (signatureEntryEquals(stagedSignatures[i], prefix)) {
+        emitSignatureStatus("staging", "Duplicate prefix ignored",
+                            stagedSignatureCount);
+        return true;
+      }
+    }
+
+    const bool allowLocalAdministered = payload.substring(separator + 1).toInt() == 1;
+    OuiSignature &slot = stagedSignatures[stagedSignatureCount++];
+    memcpy(slot.bytes, prefix, sizeof(slot.bytes));
+    slot.allowLocalAdministered = allowLocalAdministered;
+    slot.label = allowLocalAdministered ? "flock-wifi-wildcard" : "flock-wifi";
+    emitSignatureStatus("staging", "Prefix received", stagedSignatureCount);
+    return true;
+  }
+
+  if (lowerCommand == "sf" || lowerCommand == "signatures-apply") {
+    if (stagedSignatureCount == 0) {
+      emitSignatureStatus("error", "No staged signatures", stagedSignatureCount);
+      return true;
+    }
+    signatureApplyRequested = true;
+    emitSignatureStatus("queued", "Signature set queued", stagedSignatureCount);
+    return true;
+  }
+
+  return false;
+}
+
+static void applyStagedSignatures() {
+  signatureApplyRequested = false;
+  if (stagedSignatureCount == 0) {
+    emitSignatureStatus("error", "No staged signatures", activeSignatureCount());
+    return;
+  }
+
+  const bool resumeSniffer = wifiSnifferActive && bleConnected;
+  if (resumeSniffer) {
+    stopSniffer();
+  }
+
+  memcpy(dynamicSignatures, stagedSignatures,
+         stagedSignatureCount * sizeof(stagedSignatures[0]));
+  dynamicSignatureCount = stagedSignatureCount;
+  if (stagedSignatureVersion[0] == '\0') {
+    strlcpy(dynamicSignatureVersion, "synced", sizeof(dynamicSignatureVersion));
+  } else {
+    strlcpy(dynamicSignatureVersion, stagedSignatureVersion,
+            sizeof(dynamicSignatureVersion));
+  }
+
+  saveDynamicSignatures();
+  resetStagedSignatures();
+  if (resumeSniffer) {
+    setupSniffer();
+  }
+  emitSignatureStatus("active", "Signature set updated", dynamicSignatureCount);
+  emitStatus("signatures-updated");
 }
 
 static void performOtaUpdate() {
@@ -680,6 +940,8 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
       queueDrops = 0;
       memset(seenEntries, 0, sizeof(seenEntries));
       emitStatus("counts-reset");
+    } else if (processSignatureCommand(command, lowerCommand)) {
+      return;
     } else if (processOtaCommand(command, lowerCommand)) {
       return;
     } else {
@@ -751,6 +1013,7 @@ void setup() {
   Serial.begin(115200);
   delay(250);
 
+  loadDynamicSignatures();
   detectionQueue = xQueueCreate(24, sizeof(DetectionEvent));
   setupBle();
   emitStatus("boot");
@@ -765,6 +1028,10 @@ void loop() {
 
   if (otaStartRequested && !otaInProgress) {
     performOtaUpdate();
+  }
+
+  if (signatureApplyRequested) {
+    applyStagedSignatures();
   }
 
   if (wifiSnifferActive && nowMs - lastChannelHopMs >= CHANNEL_DWELL_MS) {
