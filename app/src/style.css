@@ -454,6 +454,65 @@ h1 {
   overflow-wrap: anywhere;
 }
 
+.wifi-readout {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-height: 46px;
+  border: 1px solid rgba(65, 85, 97, 0.54);
+  border-radius: 8px;
+  background: rgba(9, 15, 20, 0.56);
+  padding: 9px 10px;
+}
+
+.wifi-readout-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--muted);
+  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.08);
+}
+
+.wifi-readout[data-state="connected"] .wifi-readout-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(90, 242, 190, 0.1);
+}
+
+.wifi-readout[data-state="limited"] .wifi-readout-dot {
+  background: #f3c95f;
+  box-shadow: 0 0 0 4px rgba(243, 201, 95, 0.1);
+}
+
+.wifi-readout[data-state="offline"],
+.wifi-readout[data-state="error"] {
+  border-color: rgba(255, 111, 145, 0.38);
+}
+
+.wifi-readout[data-state="offline"] .wifi-readout-dot,
+.wifi-readout[data-state="error"] .wifi-readout-dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px rgba(255, 111, 145, 0.1);
+}
+
+.wifi-readout strong {
+  display: block;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.wifi-readout span:not(.wifi-readout-dot) {
+  display: block;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .module-fields {
   display: grid;
   grid-template-columns: minmax(0, 1fr);

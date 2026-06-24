@@ -265,6 +265,8 @@ let signatureFetchPromise: Promise<SignatureFeed> | null = null;
 let signatureSyncBusy = false;
 let signatureSyncedForKey = '';
 
+type WifiReadoutState = 'unknown' | 'connected' | 'limited' | 'offline' | 'error';
+
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <main class="shell" data-mobile-tab="map">
     <header class="topbar">
@@ -352,6 +354,13 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
               <strong>Sensor firmware</strong>
               <span>Connect RoadLensESP32</span>
             </div>
+            <div id="wifiReadout" class="wifi-readout" data-state="unknown">
+              <span class="wifi-readout-dot"></span>
+              <div>
+                <strong>Phone Wi-Fi</strong>
+                <span>Not checked</span>
+              </div>
+            </div>
             <div class="module-fields">
               <label>
                 <span>SSID</span>
@@ -427,6 +436,7 @@ const usbScanButton = document.querySelector<HTMLButtonElement>('#usbScanButton'
 const usbFlashButton = document.querySelector<HTMLButtonElement>('#usbFlashButton')!;
 const bleSweepButton = document.querySelector<HTMLButtonElement>('#bleSweepButton')!;
 const moduleStatus = document.querySelector<HTMLDivElement>('#moduleStatus')!;
+const wifiReadout = document.querySelector<HTMLDivElement>('#wifiReadout')!;
 const wifiSsidInput = document.querySelector<HTMLInputElement>('#wifiSsidInput')!;
 const wifiPasswordInput = document.querySelector<HTMLInputElement>('#wifiPasswordInput')!;
 const wifiFillButton = document.querySelector<HTMLButtonElement>('#wifiFillButton')!;
@@ -472,6 +482,7 @@ initMap();
 renderUsbSetup();
 render();
 void startLocationWatch();
+void refreshWifiReadout({ quiet: true });
 void refreshSignatureFeed({ quiet: true });
 
 function setMobileTab(tab: string) {
@@ -484,6 +495,8 @@ function setMobileTab(tab: string) {
 
   if (tab === 'map') {
     window.setTimeout(() => map.invalidateSize(), 160);
+  } else if (tab === 'setup') {
+    void refreshWifiReadout({ quiet: true });
   }
 }
 
@@ -839,6 +852,17 @@ function setModuleState(summary: string, detail: string) {
   `;
 }
 
+function setWifiReadout(state: WifiReadoutState, summary: string, detail: string) {
+  wifiReadout.dataset.state = state;
+  wifiReadout.innerHTML = `
+    <span class="wifi-readout-dot"></span>
+    <div>
+      <strong>${escapeHtml(summary)}</strong>
+      <span>${escapeHtml(detail)}</span>
+    </div>
+  `;
+}
+
 function toHexId(value: number) {
   return `0x${value.toString(16).padStart(4, '0')}`;
 }
@@ -1097,12 +1121,12 @@ async function loadCurrentWifiSsid() {
     await startLocationWatch();
     if (!Capacitor.isNativePlatform()) {
       setModuleState('SSID unavailable', 'Enter Wi-Fi name manually');
+      setWifiReadout('limited', 'Phone Wi-Fi', 'Android app required for Wi-Fi readout');
       return;
     }
 
-    const info = await RoadLensNetwork.getWifiInfo();
+    const info = await refreshWifiReadout({ prefillSsid: true });
     if (info.ssid) {
-      wifiSsidInput.value = info.ssid;
       setModuleState('Wi-Fi selected', info.ssid);
     } else if (info.connected) {
       setModuleState('SSID hidden', 'Enter Wi-Fi name manually');
@@ -1111,6 +1135,38 @@ async function loadCurrentWifiSsid() {
     }
   } catch (error) {
     setModuleState('Wi-Fi check failed', error instanceof Error ? error.message : 'Enter SSID manually');
+    setWifiReadout('error', 'Wi-Fi check failed', error instanceof Error ? error.message : 'Try again');
+  }
+}
+
+async function refreshWifiReadout(options: { quiet?: boolean; prefillSsid?: boolean } = {}) {
+  if (!Capacitor.isNativePlatform()) {
+    setWifiReadout('limited', 'Phone Wi-Fi', 'Android app required');
+    return { connected: false, locationPermission: false };
+  }
+
+  if (!options.quiet) {
+    setWifiReadout('unknown', 'Checking Wi-Fi', 'Reading phone network');
+  }
+
+  try {
+    const info = await RoadLensNetwork.getWifiInfo();
+    if (info.connected && info.ssid) {
+      if (options.prefillSsid) {
+        wifiSsidInput.value = info.ssid;
+      }
+      setWifiReadout('connected', 'Phone Wi-Fi connected', info.ssid);
+    } else if (info.connected && info.locationPermission === false) {
+      setWifiReadout('limited', 'Phone Wi-Fi connected', 'Location permission needed for SSID');
+    } else if (info.connected) {
+      setWifiReadout('limited', 'Phone Wi-Fi connected', 'SSID hidden by Android');
+    } else {
+      setWifiReadout('offline', 'Phone not on Wi-Fi', 'Connect phone to Wi-Fi before Sensor OTA');
+    }
+    return info;
+  } catch (error) {
+    setWifiReadout('error', 'Wi-Fi check failed', error instanceof Error ? error.message : 'Try again');
+    throw error;
   }
 }
 
