@@ -1,12 +1,12 @@
 {
     "name":  "RoadLens Scout",
-    "version":  "0.1.4",
-    "generatedAt":  "2026-06-23T18:55:22Z",
+    "version":  "0.1.5",
+    "generatedAt":  "2026-06-24T06:33:36Z",
     "apk":  {
-                "path":  "https://github.com/Its-ze/roadlens-scout/releases/download/v0.1.4/roadlens-scout-v0.1.4-debug.apk",
-                "asset":  "roadlens-scout-v0.1.4-debug.apk",
-                "bytes":  5431922,
-                "sha256":  "bdedd57e570ee896a3643c5318178aac400969b432e8b408844da954a06b551f"
+                "path":  "https://github.com/Its-ze/roadlens-scout/releases/download/v0.1.5/roadlens-scout-v0.1.5-debug.apk",
+                "asset":  "roadlens-scout-v0.1.5-debug.apk",
+                "bytes":  5611256,
+                "sha256":  "841e5d6f829ca494727a64c706e1bf145ce6ffffb1d3ebc647faef08db1a9a30"
             },
     "firmware":  {
                      "manifest":  "flasher/manifest.json",

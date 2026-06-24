@@ -1,4 +1,4 @@
-bdedd57e570ee896a3643c5318178aac400969b432e8b408844da954a06b551f  https://github.com/Its-ze/roadlens-scout/releases/download/v0.1.4/roadlens-scout-v0.1.4-debug.apk
+841e5d6f829ca494727a64c706e1bf145ce6ffffb1d3ebc647faef08db1a9a30  https://github.com/Its-ze/roadlens-scout/releases/download/v0.1.5/roadlens-scout-v0.1.5-debug.apk
 f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0  flasher/firmware/esp32/boot_app0.bin
 3d234a7471f67b013686dabd4dee7c1fa915c9928463616a94bc9297acf1abf8  flasher/firmware/esp32/bootloader.bin
 042a91bb936228eaad0fcba1af2710160d1816fc092dc70094a5fdb1c83e2348  flasher/firmware/esp32/firmware.bin

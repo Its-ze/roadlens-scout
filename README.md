@@ -93,6 +93,14 @@ If this machine still lacks Java/Android SDK, run:
 
 Then apply the printed environment variables in the same shell and rerun the APK build.
 
+### Phone USB Setup
+
+The Android app has a `Setup` tab for a phone-plugged ESP32. It detects USB-OTG
+serial devices such as Espressif native USB, CP210x, CH34x, and FTDI bridges,
+requests Android USB permission, and opens the RoadLens flasher with the device
+context. After flashing, return to the app and use `Connect` to link to
+`RoadLensESP32`; while linked, the same button becomes `Disconnect`.
+
 ## In-App GitHub Updates
 
 The Android app has an `Update` button. It checks the latest GitHub release for the configured repo, finds the best `.apk` asset, compares the release tag/name version against the installed app version, downloads the APK, and opens Android's installer.

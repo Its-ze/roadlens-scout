@@ -334,7 +334,7 @@ h1 {
 .feed {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   border-left: 1px solid rgba(65, 85, 97, 0.68);
   background: rgba(13, 18, 22, 0.94);
 }
@@ -390,6 +390,47 @@ h1 {
   color: var(--subtle);
   font-size: 11px;
   text-align: right;
+}
+
+.setup-panel {
+  gap: 12px;
+}
+
+.setup-card {
+  display: grid;
+  gap: 10px;
+}
+
+.setup-device {
+  min-height: 64px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  border: 1px solid rgba(65, 85, 97, 0.64);
+  border-radius: 8px;
+  background: linear-gradient(145deg, rgba(27, 42, 50, 0.96), rgba(18, 27, 34, 0.96));
+  padding: 11px;
+}
+
+.setup-device strong {
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.setup-device span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.setup-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .target-list,
@@ -625,17 +666,23 @@ h1 {
   }
 
   .shell[data-mobile-tab="targets"] .feed,
-  .shell[data-mobile-tab="signals"] .feed {
+  .shell[data-mobile-tab="signals"] .feed,
+  .shell[data-mobile-tab="setup"] .feed {
     display: grid;
   }
 
   .shell[data-mobile-tab="targets"] .signals-panel,
-  .shell[data-mobile-tab="signals"] .targets-panel {
+  .shell[data-mobile-tab="targets"] .setup-panel,
+  .shell[data-mobile-tab="signals"] .targets-panel,
+  .shell[data-mobile-tab="signals"] .setup-panel,
+  .shell[data-mobile-tab="setup"] .targets-panel,
+  .shell[data-mobile-tab="setup"] .signals-panel {
     display: none;
   }
 
   .shell[data-mobile-tab="targets"] .targets-panel,
-  .shell[data-mobile-tab="signals"] .signals-panel {
+  .shell[data-mobile-tab="signals"] .signals-panel,
+  .shell[data-mobile-tab="setup"] .setup-panel {
     min-height: 0;
     overflow: auto;
     border-bottom: 0;
@@ -665,7 +712,7 @@ h1 {
     bottom: calc(8px + env(safe-area-inset-bottom));
     min-height: var(--mobile-tabs-height);
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 6px;
     padding: 8px;
     border: 1px solid rgba(65, 85, 97, 0.76);

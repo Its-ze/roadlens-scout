@@ -22,6 +22,7 @@ const UPDATE_REPO = __GITHUB_REPO__;
 const APP_NAME = 'RoadLens Scout';
 const SENSOR_NAME = 'RoadLensESP32';
 const MAX_STORED_SPOTS = 2000;
+const PHONE_FLASHER_URL = 'https://its-ze.github.io/roadlens-scout/flasher/';
 
 type RoadLensUpdaterPlugin = {
   canInstallPackages(): Promise<{ allowed: boolean }>;
@@ -33,6 +34,32 @@ type RoadLensUpdaterPlugin = {
 };
 
 const RoadLensUpdater = registerPlugin<RoadLensUpdaterPlugin>('RoadLensUpdater');
+
+type RoadLensUsbDevice = {
+  deviceId: number;
+  vendorId: number;
+  productId: number;
+  deviceName: string;
+  label: string;
+  driverHint: string;
+  chipFamily?: string;
+  manufacturerName?: string;
+  productName?: string;
+  serialNumber?: string;
+  supported: boolean;
+  permissionGranted: boolean;
+};
+
+type RoadLensUsbPlugin = {
+  listDevices(): Promise<{ devices: RoadLensUsbDevice[] }>;
+  requestPermission(options: { deviceId: number }): Promise<{
+    granted: boolean;
+    device?: RoadLensUsbDevice;
+  }>;
+  openFlasher(options: { url: string }): Promise<{ opened: boolean }>;
+};
+
+const RoadLensUsb = registerPlugin<RoadLensUsbPlugin>('RoadLensUsb');
 
 type SensorStatus = {
   type: 'status';
@@ -90,6 +117,8 @@ let notificationBuffer = '';
 let connectedDevice: BleDevice | null = null;
 let lastPosition: Position | null = null;
 let watchId: string | null = null;
+let usbDevices: RoadLensUsbDevice[] = [];
+let selectedUsbDevice: RoadLensUsbDevice | null = null;
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <main class="shell" data-mobile-tab="map">
@@ -157,6 +186,23 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <button id="statusButton" class="ghost"><i data-lucide="refresh-cw"></i><span>Status</span></button>
         </div>
 
+        <section class="panel-section setup-panel">
+          <div class="section-title">
+            <h3>USB Setup</h3>
+            <span id="usbSummary">No device checked</span>
+          </div>
+          <div class="setup-card">
+            <div id="usbDeviceCard" class="setup-device">
+              <strong>Phone flasher ready</strong>
+              <span>Plug in ESP32</span>
+            </div>
+            <div class="setup-actions">
+              <button id="usbScanButton"><i data-lucide="usb"></i><span>Detect</span></button>
+              <button id="usbFlashButton" class="primary"><i data-lucide="zap"></i><span>Flash</span></button>
+            </div>
+          </div>
+        </section>
+
         <section class="panel-section targets-panel">
           <div class="section-title">
             <h3>Likely Points</h3>
@@ -188,6 +234,9 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <button data-mobile-tab-target="actions" aria-selected="false">
         <i data-lucide="sliders-horizontal"></i><span>Actions</span>
       </button>
+      <button data-mobile-tab-target="setup" aria-selected="false">
+        <i data-lucide="usb"></i><span>Setup</span>
+      </button>
     </nav>
   </main>
 `;
@@ -205,16 +254,33 @@ const signalText = document.querySelector<HTMLSpanElement>('#signalText')!;
 const targetSummary = document.querySelector<HTMLParagraphElement>('#targetSummary')!;
 const targetList = document.querySelector<HTMLDivElement>('#targetList')!;
 const feedList = document.querySelector<HTMLDivElement>('#feedList')!;
+const connectButton = document.querySelector<HTMLButtonElement>('#connectButton')!;
+const usbSummary = document.querySelector<HTMLSpanElement>('#usbSummary')!;
+const usbDeviceCard = document.querySelector<HTMLDivElement>('#usbDeviceCard')!;
+const usbScanButton = document.querySelector<HTMLButtonElement>('#usbScanButton')!;
+const usbFlashButton = document.querySelector<HTMLButtonElement>('#usbFlashButton')!;
 const mobileTabButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-mobile-tab-target]'),
 );
 
-document.querySelector<HTMLButtonElement>('#connectButton')!.addEventListener('click', connectSensor);
+connectButton.addEventListener('click', () => {
+  if (connectedDevice) {
+    void disconnectSensor();
+  } else {
+    void connectSensor();
+  }
+});
 document.querySelector<HTMLButtonElement>('#manualButton')!.addEventListener('click', saveManualSpot);
 document.querySelector<HTMLButtonElement>('#updateButton')!.addEventListener('click', checkForUpdate);
 document.querySelector<HTMLButtonElement>('#exportButton')!.addEventListener('click', exportGeoJson);
 document.querySelector<HTMLButtonElement>('#clearButton')!.addEventListener('click', clearSpots);
 document.querySelector<HTMLButtonElement>('#statusButton')!.addEventListener('click', () => sendCommand('status'));
+usbScanButton.addEventListener('click', () => {
+  void refreshUsbDevices();
+});
+usbFlashButton.addEventListener('click', () => {
+  void openPhoneFlasher();
+});
 mobileTabButtons.forEach((button) => {
   button.addEventListener('click', () => {
     setMobileTab(button.dataset.mobileTabTarget ?? 'map');
@@ -222,6 +288,7 @@ mobileTabButtons.forEach((button) => {
 });
 
 initMap();
+renderUsbSetup();
 render();
 void startLocationWatch();
 
@@ -257,6 +324,7 @@ function initMap() {
 
 async function connectSensor() {
   try {
+    connectButton.disabled = true;
     setSensorState('busy', 'Preparing Bluetooth');
     await startLocationWatch();
     await BleClient.initialize({ androidNeverForLocation: false });
@@ -265,9 +333,7 @@ async function connectSensor() {
 
     setSensorState('busy', `Connecting to ${device.name ?? 'sensor'}`);
     await BleClient.connect(device.deviceId, () => {
-      connectedDevice = null;
-      setSensorState('offline', 'Sensor disconnected');
-      signalText.textContent = 'Offline';
+      handleSensorDisconnect();
     });
 
     connectedDevice = device;
@@ -279,11 +345,51 @@ async function connectSensor() {
     );
     setSensorState('online', `${device.name ?? SENSOR_NAME} connected`);
     signalText.textContent = 'Linked';
+    updateConnectionButton();
     await sendCommand('status');
   } catch (error) {
     setSensorState('error', error instanceof Error ? error.message : 'Connection failed');
     signalText.textContent = 'Error';
+  } finally {
+    connectButton.disabled = false;
+    updateConnectionButton();
   }
+}
+
+async function disconnectSensor() {
+  if (!connectedDevice) {
+    handleSensorDisconnect();
+    return;
+  }
+
+  const deviceId = connectedDevice.deviceId;
+  connectButton.disabled = true;
+  setSensorState('busy', 'Disconnecting sensor');
+
+  try {
+    await BleClient.stopNotifications(deviceId, SERVICE_UUID, NOTIFY_UUID).catch(() => undefined);
+    await BleClient.disconnect(deviceId).catch(() => undefined);
+  } finally {
+    connectButton.disabled = false;
+    handleSensorDisconnect();
+  }
+}
+
+function handleSensorDisconnect() {
+  connectedDevice = null;
+  notificationBuffer = '';
+  setSensorState('offline', 'Sensor disconnected');
+  signalText.textContent = 'Offline';
+  updateConnectionButton();
+}
+
+function updateConnectionButton() {
+  const icon = connectedDevice ? 'bluetooth-off' : 'bluetooth';
+  const label = connectedDevice ? 'Disconnect' : 'Connect';
+  connectButton.classList.toggle('danger', Boolean(connectedDevice));
+  connectButton.classList.toggle('primary', !connectedDevice);
+  connectButton.innerHTML = `<i data-lucide="${icon}"></i><span>${label}</span>`;
+  createIcons({ icons });
 }
 
 async function findSensorDevice(): Promise<BleDevice> {
@@ -399,6 +505,144 @@ async function sendCommand(command: string) {
     COMMAND_UUID,
     new DataView(bytes.buffer),
   );
+}
+
+async function refreshUsbDevices() {
+  usbScanButton.disabled = true;
+  setUsbState('Checking USB', 'Scanning phone USB');
+
+  try {
+    if (!Capacitor.isNativePlatform()) {
+      usbDevices = [];
+      selectedUsbDevice = null;
+      setUsbState('Android app only', 'Use the APK on the phone');
+      return;
+    }
+
+    const result = await RoadLensUsb.listDevices();
+    usbDevices = result.devices ?? [];
+    selectedUsbDevice =
+      usbDevices.find((device) => device.supported) ?? usbDevices[0] ?? null;
+    renderUsbSetup();
+
+    if (selectedUsbDevice) {
+      setUsbState(
+        selectedUsbDevice.supported ? 'ESP32 USB found' : 'USB device found',
+        selectedUsbDevice.label,
+      );
+    } else {
+      setUsbState('No USB device', 'Plug in ESP32');
+    }
+  } catch (error) {
+    usbDevices = [];
+    selectedUsbDevice = null;
+    setUsbState('USB check failed', error instanceof Error ? error.message : 'USB unavailable');
+  } finally {
+    usbScanButton.disabled = false;
+  }
+}
+
+async function openPhoneFlasher() {
+  if (!selectedUsbDevice) {
+    await refreshUsbDevices();
+  }
+
+  let device = selectedUsbDevice;
+  if (device && !device.permissionGranted && Capacitor.isNativePlatform()) {
+    setUsbState('USB permission', device.label);
+    try {
+      const permission = await RoadLensUsb.requestPermission({ deviceId: device.deviceId });
+      if (!permission.granted) {
+        setUsbState('USB permission denied', device.label);
+        return;
+      }
+      device = permission.device ?? device;
+      selectedUsbDevice = device;
+      usbDevices = usbDevices.map((item) =>
+        item.deviceId === device?.deviceId ? { ...item, permissionGranted: true } : item,
+      );
+    } catch (error) {
+      setUsbState('USB permission failed', error instanceof Error ? error.message : 'Permission failed');
+      return;
+    }
+  }
+
+  const flasherUrl = buildPhoneFlasherUrl(device);
+  setUsbState('Opening flasher', device?.label ?? 'RoadLens flasher');
+
+  try {
+    if (Capacitor.isNativePlatform()) {
+      await RoadLensUsb.openFlasher({ url: flasherUrl });
+    } else {
+      window.open(flasherUrl, '_blank', 'noopener');
+    }
+    setUsbState('Flasher opened', device?.label ?? 'RoadLens flasher');
+  } catch (error) {
+    setUsbState('Flasher blocked', error instanceof Error ? error.message : flasherUrl);
+  }
+}
+
+function buildPhoneFlasherUrl(device: RoadLensUsbDevice | null) {
+  const params = new URLSearchParams({
+    source: 'roadlens-app',
+    app: APP_VERSION,
+  });
+
+  if (device) {
+    params.set('vendor', toHexId(device.vendorId));
+    params.set('product', toHexId(device.productId));
+    params.set('driver', device.driverHint);
+    if (device.chipFamily) {
+      params.set('chip', device.chipFamily);
+    }
+  }
+
+  return `${PHONE_FLASHER_URL}?${params.toString()}`;
+}
+
+function renderUsbSetup() {
+  const device = selectedUsbDevice;
+  usbFlashButton.disabled = false;
+
+  if (!Capacitor.isNativePlatform()) {
+    usbSummary.textContent = 'Android app only';
+    usbDeviceCard.innerHTML = `
+      <strong>Phone USB setup</strong>
+      <span>Install the APK on Android</span>
+    `;
+    return;
+  }
+
+  if (!device) {
+    usbSummary.textContent = usbDevices.length ? `${usbDevices.length} unsupported` : 'No device checked';
+    usbDeviceCard.innerHTML = `
+      <strong>Phone flasher ready</strong>
+      <span>Plug in ESP32</span>
+    `;
+    return;
+  }
+
+  usbSummary.textContent = device.supported
+    ? `${device.driverHint.toUpperCase()} ${device.permissionGranted ? 'ready' : 'found'}`
+    : 'Unsupported USB';
+  usbDeviceCard.innerHTML = `
+    <strong>${escapeHtml(device.label)}</strong>
+    <span>${toHexId(device.vendorId)}:${toHexId(device.productId)} | ${
+      device.permissionGranted ? 'permission ready' : 'permission needed'
+    }</span>
+  `;
+}
+
+function setUsbState(summary: string, detail: string) {
+  usbSummary.textContent = summary;
+  usbDeviceCard.innerHTML = `
+    <strong>${escapeHtml(summary)}</strong>
+    <span>${escapeHtml(detail)}</span>
+  `;
+}
+
+function toHexId(value: number) {
+  return `0x${value.toString(16).padStart(4, '0')}`;
 }
 
 function handleNotification(value: DataView) {
