@@ -58,9 +58,11 @@ USB upload:
 Replace `COM15` with the live ESP32 port.
 
 After flashing, reset or power-cycle the board and look for the BLE device name
-`RoadLensESP32` from the Android app. Firmware `0.1.4` keeps Wi-Fi monitor mode
+`RoadLensESP32` from the Android app. Firmware `0.1.6` keeps Wi-Fi monitor mode
 off until the phone connects, so the ESP32 advertises over Bluetooth first and
-then starts passive detection after the app is linked.
+then starts passive detection after the app is linked. It scans 2.4 GHz channels
+1-11, reports raw frame counters in app status, and matches the current 42-prefix
+public Flock Wi-Fi signature set.
 
 For a specific USB-upload target:
 
@@ -100,6 +102,10 @@ serial devices such as Espressif native USB, CP210x, CH34x, and FTDI bridges,
 requests Android USB permission, and opens the RoadLens flasher with the device
 context. After flashing, return to the app and use `Connect` to link to
 `RoadLensESP32`; while linked, the same button becomes `Disconnect`.
+
+The `Setup` tab also has `BLE Sweep`. It runs a short phone-side BLE scan for
+known Flock-style BLE names, manufacturer IDs, and MAC prefixes, then saves any
+matches to the same GPS-tagged map as ESP32 Wi-Fi hits.
 
 ## In-App GitHub Updates
 

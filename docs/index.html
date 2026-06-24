@@ -409,6 +409,7 @@
             <p class="muted">
               Auto-detected ESP32-family sensor firmware, Android APK, checksums, and release metadata in one Pages-ready package.
               This firmware advertises over BLE first, then starts passive detection after the phone connects.
+              The Android app can also run a phone-side BLE sweep for compatible name, manufacturer, and prefix matches.
             </p>
 
             <div class="actions">
@@ -427,12 +428,16 @@
                 <span>Installer picks ESP32, ESP32-S3, or ESP32-C3 builds automatically.</span>
               </div>
               <div>
-                <strong>BLE-first startup</strong>
-                <span>After reset, connect to RoadLensESP32 from the app before Wi-Fi monitor mode starts.</span>
+                <strong>Wider Wi-Fi sweep</strong>
+                <span>Firmware scans channels 1-11 and matches the current 42-prefix public signature set.</span>
               </div>
               <div>
                 <strong>Phone USB setup</strong>
                 <span>The APK Setup tab detects a plugged-in ESP32 and opens the matching RoadLens flasher.</span>
+              </div>
+              <div>
+                <strong>Phone BLE sweep</strong>
+                <span>The APK can scan BLE names, manufacturer IDs, and known prefixes from the phone.</span>
               </div>
               <div class="warn">
                 <strong>No working phone sensor build</strong>

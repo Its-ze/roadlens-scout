@@ -23,6 +23,21 @@ const APP_NAME = 'RoadLens Scout';
 const SENSOR_NAME = 'RoadLensESP32';
 const MAX_STORED_SPOTS = 2000;
 const PHONE_FLASHER_URL = 'https://its-ze.github.io/roadlens-scout/flasher/';
+const PHONE_BLE_SWEEP_MS = 15000;
+
+const FLOCK_BLE_PREFIXES = new Set([
+  '70:c9:4e', '3c:91:80', 'd8:f3:bc', '80:30:49', 'b8:35:32',
+  '14:5a:fc', '74:4c:a1', '08:3a:88', '9c:2f:9d', 'c0:35:32',
+  '94:08:53', 'e4:aa:ea', 'f4:6a:dd', '24:b2:b9', '00:f4:8d',
+  'd0:39:57', 'e8:d0:fc', 'e0:4f:43', 'b8:1e:a4', '70:08:94',
+  '58:8e:81', 'ec:1b:bd', '3c:71:bf', '58:00:e3', '90:35:ea',
+  '5c:93:a2', '64:6e:69', '48:27:ea', 'a4:cf:12', '04:0d:84',
+  'f0:82:c0', '1c:34:f1', '38:5b:44', '94:34:69', 'b4:e3:f9',
+  'b4:1e:52', '14:b5:cd', '94:2a:6f', 'f4:e2:c6', 'd4:11:d6',
+  'e0:0a:f6', '82:6b:f2',
+]);
+const FLOCK_BLE_NAME_PATTERNS = ['fs ext battery', 'penguin', 'flock', 'pigvision'];
+const FLOCK_BLE_MANUFACTURER_IDS = new Set([0x09c8]);
 
 type RoadLensUpdaterPlugin = {
   canInstallPackages(): Promise<{ allowed: boolean }>;
@@ -70,6 +85,13 @@ type SensorStatus = {
   detections?: number;
   signature_count?: number;
   ble_connected?: boolean;
+  sniffer_active?: boolean;
+  frames_seen?: number;
+  mgmt_frames?: number;
+  data_frames?: number;
+  wildcard_probes?: number;
+  candidate_frames?: number;
+  queue_drops?: number;
 };
 
 type DetectionMessage = {
@@ -119,6 +141,8 @@ let lastPosition: Position | null = null;
 let watchId: string | null = null;
 let usbDevices: RoadLensUsbDevice[] = [];
 let selectedUsbDevice: RoadLensUsbDevice | null = null;
+let phoneBleSweepActive = false;
+let phoneBleSeen = new Map<string, number>();
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <main class="shell" data-mobile-tab="map">
@@ -199,6 +223,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <div class="setup-actions">
               <button id="usbScanButton"><i data-lucide="usb"></i><span>Detect</span></button>
               <button id="usbFlashButton" class="primary"><i data-lucide="zap"></i><span>Flash</span></button>
+              <button id="bleSweepButton"><i data-lucide="radar"></i><span>BLE Sweep</span></button>
             </div>
           </div>
         </section>
@@ -259,6 +284,7 @@ const usbSummary = document.querySelector<HTMLSpanElement>('#usbSummary')!;
 const usbDeviceCard = document.querySelector<HTMLDivElement>('#usbDeviceCard')!;
 const usbScanButton = document.querySelector<HTMLButtonElement>('#usbScanButton')!;
 const usbFlashButton = document.querySelector<HTMLButtonElement>('#usbFlashButton')!;
+const bleSweepButton = document.querySelector<HTMLButtonElement>('#bleSweepButton')!;
 const mobileTabButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-mobile-tab-target]'),
 );
@@ -280,6 +306,9 @@ usbScanButton.addEventListener('click', () => {
 });
 usbFlashButton.addEventListener('click', () => {
   void openPhoneFlasher();
+});
+bleSweepButton.addEventListener('click', () => {
+  void runPhoneBleSweep();
 });
 mobileTabButtons.forEach((button) => {
   button.addEventListener('click', () => {
@@ -677,7 +706,168 @@ function handleStatus(status: SensorStatus) {
   const reason = status.reason ? ` ${status.reason}` : '';
   const channel = status.channel ? ` ch${status.channel}` : '';
   setSensorState(status.ble_connected === false ? 'offline' : 'online', `${status.device ?? SENSOR_NAME}${reason}${channel}`);
-  signalText.textContent = typeof status.detections === 'number' ? `${status.detections}` : 'Linked';
+
+  if (typeof status.detections === 'number' && status.detections > 0) {
+    signalText.textContent = `${status.detections}`;
+  } else if (status.sniffer_active) {
+    signalText.textContent = 'Scan';
+  } else {
+    signalText.textContent = 'Linked';
+  }
+
+  if (status.sniffer_active && status.detections === 0 && typeof status.frames_seen === 'number') {
+    const candidates = status.candidate_frames ?? 0;
+    const wildcards = status.wildcard_probes ?? 0;
+    mapFocusText.textContent =
+      status.frames_seen > 0
+        ? `Scanning: ${status.frames_seen} frames, ${candidates} candidates, ${wildcards} wildcard probes`
+        : 'Scanning: no 2.4 GHz frames seen yet';
+  }
+}
+
+async function runPhoneBleSweep() {
+  if (phoneBleSweepActive) {
+    return;
+  }
+
+  phoneBleSweepActive = true;
+  bleSweepButton.disabled = true;
+  let adsSeen = 0;
+  let matches = 0;
+
+  try {
+    await startLocationWatch();
+    await BleClient.initialize({ androidNeverForLocation: false });
+    setUsbState('BLE sweep running', 'Scanning phone BLE for 15 seconds');
+
+    await BleClient.requestLEScan(
+      {
+        allowDuplicates: true,
+        scanMode: ScanMode.SCAN_MODE_LOW_LATENCY,
+      },
+      (result: ScanResult) => {
+        adsSeen++;
+        const match = classifyPhoneBleResult(result);
+        if (!match) {
+          return;
+        }
+
+        const duplicateKey = `${match.mac}|${match.label}|${match.method}`;
+        const now = Date.now();
+        const lastSeen = phoneBleSeen.get(duplicateKey) ?? 0;
+        if (now - lastSeen < 15000) {
+          return;
+        }
+
+        phoneBleSeen.set(duplicateKey, now);
+        matches++;
+        void saveDetection({
+          type: 'detection',
+          source: 'phone-ble',
+          detector: 'phone-ble',
+          mac: match.mac,
+          role: match.method,
+          label: match.label,
+          rssi: result.rssi ?? undefined,
+          channel: undefined,
+          frame_type: undefined,
+          frame_subtype: undefined,
+          wildcard_probe: false,
+          confidence: match.confidence,
+          uptime_ms: Math.round(performance.now()),
+        });
+      },
+    );
+
+    await delay(PHONE_BLE_SWEEP_MS);
+  } catch (error) {
+    setUsbState('BLE sweep failed', error instanceof Error ? error.message : 'BLE scan unavailable');
+    return;
+  } finally {
+    await BleClient.stopLEScan().catch(() => undefined);
+    phoneBleSweepActive = false;
+    bleSweepButton.disabled = false;
+  }
+
+  setUsbState(
+    matches > 0 ? 'BLE sweep found hits' : 'BLE sweep done',
+    `${matches} matches from ${adsSeen} advertisements`,
+  );
+}
+
+function classifyPhoneBleResult(result: ScanResult) {
+  const name = (result.localName ?? result.device.name ?? '').trim();
+  const lowerName = name.toLowerCase();
+  const mac = normalizeMac(result.device.deviceId) ?? result.device.deviceId ?? 'unknown-ble';
+  const prefix = mac.length >= 8 ? mac.slice(0, 8).toLowerCase() : '';
+  const manufacturerId = firstManufacturerId(result);
+
+  if (manufacturerId != null && FLOCK_BLE_MANUFACTURER_IDS.has(manufacturerId)) {
+    return {
+      mac,
+      method: 'ble-mfr',
+      label: 'flock-ble-manufacturer',
+      confidence: 92,
+    };
+  }
+
+  const namePattern = FLOCK_BLE_NAME_PATTERNS.find((pattern) => lowerName.includes(pattern));
+  if (namePattern) {
+    return {
+      mac,
+      method: 'ble-name',
+      label: `flock-ble-${namePattern.replaceAll(' ', '-')}`,
+      confidence: 90,
+    };
+  }
+
+  if (prefix && FLOCK_BLE_PREFIXES.has(prefix)) {
+    return {
+      mac,
+      method: 'ble-oui',
+      label: 'flock-ble-prefix',
+      confidence: prefix === '82:6b:f2' ? 88 : 80,
+    };
+  }
+
+  return null;
+}
+
+function firstManufacturerId(result: ScanResult) {
+  const maybeData = result as ScanResult & {
+    manufacturerData?: Record<string, DataView | string | number[]>;
+  };
+  const manufacturerData = maybeData.manufacturerData;
+  if (!manufacturerData) {
+    return null;
+  }
+
+  for (const key of Object.keys(manufacturerData)) {
+    const parsed = Number(key);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+    const hexParsed = Number.parseInt(key.replace(/^0x/i, ''), 16);
+    if (Number.isFinite(hexParsed)) {
+      return hexParsed;
+    }
+  }
+
+  return null;
+}
+
+function normalizeMac(value: string | undefined) {
+  if (!value) {
+    return null;
+  }
+  const hex = value.replace(/[^0-9a-f]/gi, '').toLowerCase();
+  if (hex.length < 12) {
+    return null;
+  }
+  return hex
+    .slice(0, 12)
+    .match(/.{1,2}/g)
+    ?.join(':') ?? null;
 }
 
 async function saveDetection(detection: DetectionMessage) {

@@ -11,10 +11,10 @@ static constexpr char NOTIFY_UUID[] = "7d1d0002-52a1-4b81-9fd2-fd7ec3f50100";
 static constexpr char COMMAND_UUID[] = "7d1d0003-52a1-4b81-9fd2-fd7ec3f50100";
 
 static constexpr uint8_t LED_PIN = 2;
-static constexpr uint32_t CHANNEL_DWELL_MS = 350;
+static constexpr uint32_t CHANNEL_DWELL_MS = 180;
 static constexpr uint32_t DUPLICATE_SUPPRESS_MS = 15000;
 static constexpr uint32_t STATUS_INTERVAL_MS = 5000;
-static const uint8_t CHANNELS[] = {1, 6, 11};
+static const uint8_t CHANNELS[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 
 struct DetectionEvent {
   char mac[18];
@@ -44,6 +44,12 @@ static uint8_t channelIndex = 0;
 static uint32_t lastChannelHopMs = 0;
 static uint32_t lastStatusMs = 0;
 static uint32_t detectionCount = 0;
+static volatile uint32_t wifiFramesSeen = 0;
+static volatile uint32_t mgmtFramesSeen = 0;
+static volatile uint32_t dataFramesSeen = 0;
+static volatile uint32_t wildcardProbesSeen = 0;
+static volatile uint32_t candidateFramesSeen = 0;
+static volatile uint32_t queueDrops = 0;
 static SeenEntry seenEntries[24] = {};
 
 static void setupSniffer();
@@ -137,7 +143,9 @@ static void queueDetection(const uint8_t *mac, const char *role,
     event.confidence = 62;
   }
 
-  xQueueSend(detectionQueue, &event, 0);
+  if (xQueueSend(detectionQueue, &event, 0) != pdTRUE) {
+    queueDrops++;
+  }
 }
 
 static void snifferCallback(void *buf, wifi_promiscuous_pkt_type_t type) {
@@ -160,21 +168,43 @@ static void snifferCallback(void *buf, wifi_promiscuous_pkt_type_t type) {
     return;
   }
 
+  wifiFramesSeen++;
+  if (frameType == 0) {
+    mgmtFramesSeen++;
+  } else if (frameType == 2) {
+    dataFramesSeen++;
+  }
+
   const bool wildcardProbe =
       wildcardSsidProbe(payload, len, frameType, frameSubtype);
+  if (wildcardProbe) {
+    wildcardProbesSeen++;
+  }
+
   const uint8_t *addr1 = payload + 4;
   const uint8_t *addr2 = payload + 10;
   const uint8_t *addr3 = payload + 16;
   const int8_t rssi = packet->rx_ctrl.rssi;
   const uint8_t channel = packet->rx_ctrl.channel;
 
-  queueDetection(addr2, "addr2", matchFlockOui(addr2), rssi, channel, frameType,
-                 frameSubtype, wildcardProbe);
-  queueDetection(addr1, "addr1", matchFlockOui(addr1), rssi, channel, frameType,
-                 frameSubtype, false);
-  if (frameType == 0) {
-    queueDetection(addr3, "addr3", matchFlockOui(addr3), rssi, channel,
-                   frameType, frameSubtype, false);
+  auto inspectAddress = [&](const uint8_t *addr, const char *role,
+                            bool wildcardForRole) {
+    const OuiSignature *signature = matchFlockOui(addr);
+    if (signature) {
+      candidateFramesSeen++;
+    }
+    queueDetection(addr, role, signature, rssi, channel, frameType,
+                   frameSubtype, wildcardForRole);
+  };
+
+  inspectAddress(addr2, "addr2", wildcardProbe);
+  inspectAddress(addr1, "addr1", false);
+  inspectAddress(addr3, "addr3", false);
+
+  const bool toDs = (frameControl & 0x0100) != 0;
+  const bool fromDs = (frameControl & 0x0200) != 0;
+  if (frameType == 2 && toDs && fromDs && len >= 30) {
+    inspectAddress(payload + 24, "addr4", false);
   }
 }
 
@@ -188,15 +218,26 @@ static void emitLine(const String &line) {
 }
 
 static void emitStatus(const char *reason) {
-  char json[240];
+  char json[480];
   snprintf(json, sizeof(json),
            "{\"type\":\"status\",\"device\":\"%s\",\"reason\":\"%s\","
            "\"uptime_ms\":%lu,\"channel\":%u,\"detections\":%lu,"
-           "\"signature_count\":%u,\"ble_connected\":%s}\n",
+           "\"signature_count\":%u,\"ble_connected\":%s,"
+           "\"sniffer_active\":%s,\"frames_seen\":%lu,"
+           "\"mgmt_frames\":%lu,\"data_frames\":%lu,"
+           "\"wildcard_probes\":%lu,\"candidate_frames\":%lu,"
+           "\"queue_drops\":%lu}\n",
            DEVICE_NAME, reason, static_cast<unsigned long>(millis()),
            CHANNELS[channelIndex], static_cast<unsigned long>(detectionCount),
            static_cast<unsigned>(FLOCK_WIFI_OUI_COUNT),
-           bleConnected ? "true" : "false");
+           bleConnected ? "true" : "false",
+           wifiSnifferActive ? "true" : "false",
+           static_cast<unsigned long>(wifiFramesSeen),
+           static_cast<unsigned long>(mgmtFramesSeen),
+           static_cast<unsigned long>(dataFramesSeen),
+           static_cast<unsigned long>(wildcardProbesSeen),
+           static_cast<unsigned long>(candidateFramesSeen),
+           static_cast<unsigned long>(queueDrops));
   emitLine(String(json));
 }
 
@@ -252,6 +293,12 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
       emitStatus("command");
     } else if (command == "reset-counts") {
       detectionCount = 0;
+      wifiFramesSeen = 0;
+      mgmtFramesSeen = 0;
+      dataFramesSeen = 0;
+      wildcardProbesSeen = 0;
+      candidateFramesSeen = 0;
+      queueDrops = 0;
       memset(seenEntries, 0, sizeof(seenEntries));
       emitStatus("counts-reset");
     } else {

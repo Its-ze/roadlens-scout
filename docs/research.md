@@ -12,12 +12,15 @@ Current public ESP32 approaches use passive radio observation:
 - Tighter confidence when a matched transmitter sends wildcard probe requests.
 - BLE sniffing for some legacy/misconfigured setups or battery telemetry, as documented by ESP32Marauder's Flock Sniff page.
 
-RoadLens Scout implements the passive Wi-Fi path first and exposes detections to the phone over BLE. BLE-side Flock sniffing is left as the next firmware module because the BLE link is currently reserved for the phone connection.
+RoadLens Scout implements passive Wi-Fi detection on the ESP32 and phone-side BLE sweep detection in the Android app. The ESP32 reports raw scan counters so a field miss can be separated into "no matching signature" versus "no RF frames seen."
+
+As of `0.1.6`, the ESP32 Wi-Fi detector uses the current 42-prefix public signature set from the OUI-Spy unified Flock-You notes. The Android app's BLE sweep checks those MAC prefixes plus public BLE name patterns and manufacturer ID `0x09C8`.
 
 ## Sources checked
 
 - Flock product page: https://www.flocksafety.com/products/license-plate-readers
 - Public Flock-You detector research and firmware: https://github.com/colonelpanichacks/flock-you
+- Public OUI-Spy unified BLE/OUI detector notes: https://github.com/colonelpanichacks/oui-spy-unified-blue
 - Public OUI research list: https://raw.githubusercontent.com/colonelpanichacks/flock-you/HEAD/datasets/NitekryDPaul_wifi_ouis.md
 - ESP32Marauder Flock Sniff notes: https://github.com/justcallmekoko/ESP32Marauder/wiki/Flock-Sniff
 - ESP32Marauder Flock Wardrive notes: https://github.com/justcallmekoko/ESP32Marauder/wiki/Flock-Wardrive
