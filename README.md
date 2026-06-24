@@ -59,10 +59,10 @@ USB upload:
 Replace `COM15` with the live ESP32 port.
 
 After flashing, reset or power-cycle the board and look for the BLE device name
-`RoadLensESP32` from the Android app. Firmware `0.1.9` keeps Wi-Fi monitor mode
-off until the phone connects, so the ESP32 advertises over Bluetooth first and
-then starts passive detection after the app is linked. It scans 2.4 GHz channels
-1-11, reports raw frame counters in app status, and matches the current public
+`RoadLensESP32` from the Android app. Firmware `0.1.10` keeps Wi-Fi monitor mode
+off until the phone has connected and subscribed to notifications, then the app
+sends `start-scan` to begin passive detection. It scans 2.4 GHz channels 1-11,
+reports raw frame counters in app status, and matches the current public
 Flock-style Wi-Fi signature feed. The app can sync newer signature feeds into
 v0.1.8+ sensors over BLE, and the ESP32 stores the synced feed locally.
 
@@ -101,9 +101,9 @@ Then apply the printed environment variables in the same shell and rerun the APK
 
 The Android app has a `Setup` tab for a phone-plugged ESP32. It detects USB-OTG
 serial devices such as Espressif native USB, CP210x, CH34x, and FTDI bridges,
-requests Android USB permission, and opens the RoadLens flasher with the device
-context. After flashing, return to the app and use `Connect` to link to
-`RoadLensESP32`; while linked, the same button becomes `Disconnect`.
+requests Android USB permission, and flashes the bundled RoadLens firmware from
+inside the APK. After flashing, use `Connect` to link to `RoadLensESP32`; while
+linked, the same button becomes `Disconnect`.
 
 The `Setup` tab also has `BLE Sweep`. It runs a short phone-side BLE scan for
 known Flock-style BLE names, manufacturer IDs, MAC prefixes, and Raven service
@@ -112,7 +112,7 @@ GPS-tagged map as ESP32 Wi-Fi hits.
 
 ### Sensor OTA Updates
 
-Firmware `0.1.9` supports in-app ESP32 firmware updates after the board has been
+Firmware `0.1.10` supports in-app ESP32 firmware updates after the board has been
 flashed once by USB or the web flasher. When the app connects to a sensor, it
 reads the sensor firmware version and chip family, checks RoadLens Pages
 metadata, and prompts if a newer matching firmware build is available.

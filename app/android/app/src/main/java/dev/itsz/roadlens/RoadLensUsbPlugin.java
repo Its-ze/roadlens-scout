@@ -96,6 +96,52 @@ public class RoadLensUsbPlugin extends Plugin {
         }
     }
 
+    @PluginMethod
+    public void flashBundledFirmware(PluginCall call) {
+        Integer deviceId = call.getInt("deviceId");
+        String requestedChipFamily = call.getString("chipFamily");
+        if (deviceId == null) {
+            call.reject("Missing USB device id");
+            return;
+        }
+
+        UsbManager manager = getUsbManager();
+        UsbDevice device = findDeviceById(deviceId);
+        if (device == null) {
+            call.reject("USB device is no longer connected");
+            return;
+        }
+        if (!manager.hasPermission(device)) {
+            call.reject("USB permission is missing. Tap Detect, approve the USB prompt, then Flash again.");
+            return;
+        }
+        if (!profileFor(device).supported) {
+            call.reject("This USB device is not a supported ESP32 serial adapter");
+            return;
+        }
+
+        new Thread(() -> {
+            try {
+                RoadLensEspFlasher flasher = new RoadLensEspFlasher(
+                    manager,
+                    device,
+                    path -> getContext().getAssets().open(path),
+                    this::notifyFlashProgress
+                );
+                RoadLensEspFlasher.FlashResult flashResult = flasher.flashBundled(requestedChipFamily);
+
+                JSObject result = new JSObject();
+                result.put("chipFamily", flashResult.chipFamily);
+                result.put("version", flashResult.version);
+                result.put("parts", flashResult.parts);
+                result.put("bytes", flashResult.bytes);
+                getActivity().runOnUiThread(() -> call.resolve(result));
+            } catch (Exception error) {
+                getActivity().runOnUiThread(() -> call.reject(error.getMessage(), error));
+            }
+        }).start();
+    }
+
     private JSArray buildDeviceList() {
         JSArray devices = new JSArray();
         UsbManager manager = getUsbManager();
@@ -106,6 +152,16 @@ public class RoadLensUsbPlugin extends Plugin {
         }
 
         return devices;
+    }
+
+    private void notifyFlashProgress(String stage, String detail, int progress, long bytes, long totalBytes) {
+        JSObject event = new JSObject();
+        event.put("stage", stage);
+        event.put("detail", detail);
+        event.put("progress", progress);
+        event.put("bytes", bytes);
+        event.put("totalBytes", totalBytes);
+        getActivity().runOnUiThread(() -> notifyListeners("usbFlashProgress", event));
     }
 
     private JSObject buildDeviceInfo(UsbDevice device, boolean permissionGranted) {

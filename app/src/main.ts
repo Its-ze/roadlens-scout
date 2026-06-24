@@ -1,9 +1,10 @@
 import './style.css';
 import 'leaflet/dist/leaflet.css';
 
-import { BleClient, ScanMode } from '@capacitor-community/bluetooth-le';
+import { BleClient, ConnectionPriority, ScanMode } from '@capacitor-community/bluetooth-le';
 import type { BleDevice, ScanResult } from '@capacitor-community/bluetooth-le';
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import type { PluginListenerHandle } from '@capacitor/core';
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import { Geolocation } from '@capacitor/geolocation';
 import type { Position } from '@capacitor/geolocation';
@@ -89,7 +90,26 @@ type RoadLensUsbPlugin = {
     granted: boolean;
     device?: RoadLensUsbDevice;
   }>;
+  flashBundledFirmware(options: {
+    deviceId: number;
+    chipFamily?: string;
+  }): Promise<{
+    chipFamily: string;
+    version: string;
+    parts: number;
+    bytes: number;
+  }>;
   openFlasher(options: { url: string }): Promise<{ opened: boolean }>;
+  addListener(
+    eventName: 'usbFlashProgress',
+    listenerFunc: (event: {
+      stage?: string;
+      detail?: string;
+      progress?: number;
+      bytes?: number;
+      totalBytes?: number;
+    }) => void,
+  ): Promise<PluginListenerHandle>;
 };
 
 const RoadLensUsb = registerPlugin<RoadLensUsbPlugin>('RoadLensUsb');
@@ -253,6 +273,7 @@ let lastPosition: Position | null = null;
 let watchId: string | null = null;
 let usbDevices: RoadLensUsbDevice[] = [];
 let selectedUsbDevice: RoadLensUsbDevice | null = null;
+let usbFlashBusy = false;
 let phoneBleSweepActive = false;
 let phoneBleSeen = new Map<string, number>();
 let lastSensorStatus: SensorStatus | null = null;
@@ -477,6 +498,9 @@ mobileTabButtons.forEach((button) => {
     setMobileTab(button.dataset.mobileTabTarget ?? 'map');
   });
 });
+if (Capacitor.isNativePlatform()) {
+  RoadLensUsb.addListener('usbFlashProgress', handleUsbFlashProgress).catch(() => undefined);
+}
 
 initMap();
 renderUsbSetup();
@@ -518,34 +542,48 @@ function initMap() {
 }
 
 async function connectSensor() {
+  let device: BleDevice | null = null;
   try {
     connectButton.disabled = true;
     setSensorState('busy', 'Preparing Bluetooth');
     await startLocationWatch();
     await BleClient.initialize({ androidNeverForLocation: false });
 
-    const device = await findSensorDevice();
+    device = await findSensorDevice();
 
     setSensorState('busy', `Connecting to ${device.name ?? 'sensor'}`);
+    await BleClient.disconnect(device.deviceId).catch(() => undefined);
+    await delay(250);
     await BleClient.connect(device.deviceId, () => {
       handleSensorDisconnect();
-    });
+    }, { timeout: 15000 });
 
     connectedDevice = device;
     lastSensorStatus = null;
     moduleUpdatePromptedForVersion = '';
     signatureSyncedForKey = '';
+    await BleClient.requestConnectionPriority(
+      device.deviceId,
+      ConnectionPriority.CONNECTION_PRIORITY_HIGH,
+    ).catch(() => undefined);
     await BleClient.startNotifications(
       device.deviceId,
       SERVICE_UUID,
       NOTIFY_UUID,
       handleNotification,
+      { timeout: 10000 },
     );
     setSensorState('online', `${device.name ?? SENSOR_NAME} connected`);
     signalText.textContent = 'Linked';
     updateConnectionButton();
     await sendCommand('status');
+    await delay(150);
+    await sendCommand('start-scan');
   } catch (error) {
+    if (device) {
+      await BleClient.disconnect(device.deviceId).catch(() => undefined);
+    }
+    connectedDevice = null;
     setSensorState('error', error instanceof Error ? error.message : 'Connection failed');
     signalText.textContent = 'Error';
   } finally {
@@ -565,6 +603,8 @@ async function disconnectSensor() {
   setSensorState('busy', 'Disconnecting sensor');
 
   try {
+    await sendCommand('stop-scan').catch(() => undefined);
+    await delay(50);
     await BleClient.stopNotifications(deviceId, SERVICE_UUID, NOTIFY_UUID).catch(() => undefined);
     await BleClient.disconnect(deviceId).catch(() => undefined);
   } finally {
@@ -747,6 +787,10 @@ async function refreshUsbDevices() {
 }
 
 async function openPhoneFlasher() {
+  if (usbFlashBusy) {
+    return;
+  }
+
   if (!selectedUsbDevice) {
     await refreshUsbDevices();
   }
@@ -771,6 +815,11 @@ async function openPhoneFlasher() {
     }
   }
 
+  if (Capacitor.isNativePlatform()) {
+    await flashBundledSensorFirmware(device);
+    return;
+  }
+
   const flasherUrl = buildPhoneFlasherUrl(device);
   setUsbState('Opening flasher', device?.label ?? 'RoadLens flasher');
 
@@ -784,6 +833,68 @@ async function openPhoneFlasher() {
   } catch (error) {
     setUsbState('Flasher blocked', error instanceof Error ? error.message : flasherUrl);
   }
+}
+
+async function flashBundledSensorFirmware(device: RoadLensUsbDevice | null) {
+  if (!device) {
+    setUsbState('No USB device', 'Plug in ESP32 with USB-OTG');
+    return;
+  }
+  if (!device.supported) {
+    setUsbState('Unsupported USB device', `${toHexId(device.vendorId)}:${toHexId(device.productId)}`);
+    return;
+  }
+
+  usbFlashBusy = true;
+  usbFlashButton.disabled = true;
+  usbScanButton.disabled = true;
+  setUsbState('Preparing native flash', device.label);
+
+  try {
+    if (connectedDevice) {
+      await disconnectSensor();
+    }
+
+    const result = await RoadLensUsb.flashBundledFirmware({
+      deviceId: device.deviceId,
+      chipFamily: device.chipFamily,
+    });
+    setUsbState(
+      `Flash complete ${result.version}`,
+      `${result.chipFamily} ${formatBytes(result.bytes)} written across ${result.parts} parts`,
+    );
+  } catch (error) {
+    setUsbState(
+      'Flash failed',
+      error instanceof Error ? error.message : 'Hold BOOT, tap RESET, and try again',
+    );
+  } finally {
+    usbFlashBusy = false;
+    usbScanButton.disabled = false;
+    usbFlashButton.disabled = false;
+  }
+}
+
+function handleUsbFlashProgress(event: {
+  stage?: string;
+  detail?: string;
+  progress?: number;
+  bytes?: number;
+  totalBytes?: number;
+}) {
+  if (!usbFlashBusy) {
+    return;
+  }
+  const progress =
+    typeof event.progress === 'number' && Number.isFinite(event.progress)
+      ? ` ${Math.max(0, Math.min(100, Math.round(event.progress)))}%`
+      : '';
+  const detail =
+    event.detail ??
+    (typeof event.bytes === 'number' && typeof event.totalBytes === 'number'
+      ? `${formatBytes(event.bytes)} / ${formatBytes(event.totalBytes)}`
+      : 'Keep ESP32 plugged in');
+  setUsbState(`${event.stage ?? 'Flashing'}${progress}`, detail);
 }
 
 function buildPhoneFlasherUrl(device: RoadLensUsbDevice | null) {

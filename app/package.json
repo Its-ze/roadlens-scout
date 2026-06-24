@@ -1,9 +1,10 @@
 {
   "name": "roadlens-scout",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "type": "module",
   "scripts": {
+    "prebuild": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/sync-app-firmware.ps1",
     "dev": "vite --host 127.0.0.1",
     "build": "tsc && vite build",
     "preview": "vite preview --host 127.0.0.1",

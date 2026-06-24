@@ -12,7 +12,7 @@
 #include "signatures.h"
 
 #ifndef ROADLENS_FIRMWARE_VERSION
-#define ROADLENS_FIRMWARE_VERSION "0.1.9"
+#define ROADLENS_FIRMWARE_VERSION "0.1.10"
 #endif
 
 #ifndef ROADLENS_CHIP_FAMILY
@@ -61,6 +61,7 @@ static QueueHandle_t detectionQueue = nullptr;
 static NimBLECharacteristic *notifyCharacteristic = nullptr;
 static bool bleConnected = false;
 static bool wifiSnifferActive = false;
+static bool snifferStartRequested = false;
 static uint8_t channelIndex = 0;
 static uint32_t lastChannelHopMs = 0;
 static uint32_t lastStatusMs = 0;
@@ -568,12 +569,12 @@ static void emitDetection(const DetectionEvent &event) {
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer *) override {
     bleConnected = true;
-    setupSniffer();
-    emitStatus("ble-connected");
+    snifferStartRequested = false;
   }
 
   void onDisconnect(NimBLEServer *) override {
     bleConnected = false;
+    snifferStartRequested = false;
     stopSniffer();
     NimBLEDevice::startAdvertising();
   }
@@ -909,7 +910,7 @@ ota_cleanup:
   WiFi.mode(WIFI_OFF);
   resetOtaConfig();
   otaInProgress = false;
-  if (failure.length() > 0 && bleConnected) {
+  if (failure.length() > 0 && bleConnected && snifferStartRequested) {
     setupSniffer();
   }
 }
@@ -930,6 +931,13 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
       emitStatus("pong");
     } else if (lowerCommand == "status") {
       emitStatus("command");
+    } else if (lowerCommand == "start-scan") {
+      snifferStartRequested = true;
+      emitStatus("scan-starting");
+    } else if (lowerCommand == "stop-scan") {
+      snifferStartRequested = false;
+      stopSniffer();
+      emitStatus("scan-stopped");
     } else if (lowerCommand == "reset-counts") {
       detectionCount = 0;
       wifiFramesSeen = 0;
@@ -1028,6 +1036,11 @@ void loop() {
 
   if (otaStartRequested && !otaInProgress) {
     performOtaUpdate();
+  }
+
+  if (bleConnected && snifferStartRequested && !wifiSnifferActive && !otaInProgress) {
+    setupSniffer();
+    emitStatus("scan-started");
   }
 
   if (signatureApplyRequested) {

@@ -46,6 +46,13 @@ function Assert-Command($Name, $InstallHint) {
   }
 }
 
+function Invoke-Checked($Command, [string[]]$Arguments) {
+  & $Command @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "$Command failed with exit code $LASTEXITCODE"
+  }
+}
+
 Assert-Command "node" "Install Node.js or add it to PATH."
 Assert-Command "npm" "Install npm or add it to PATH."
 Assert-Command "java" "Install JDK 17+ or run scripts\bootstrap-android-tooling.ps1, then open a new shell."
@@ -54,28 +61,37 @@ if (-not $env:ANDROID_HOME -and -not $env:ANDROID_SDK_ROOT) {
   throw "ANDROID_HOME or ANDROID_SDK_ROOT is not set. Install Android SDK or run scripts\bootstrap-android-tooling.ps1."
 }
 
+& (Join-Path $PSScriptRoot "sync-app-firmware.ps1")
+
 Push-Location $AppDir
 try {
   if (-not (Test-Path -LiteralPath "node_modules")) {
-    npm install
+    Invoke-Checked "npm" @("install")
   }
 
-  npm run build
+  $distDir = Join-Path $AppDir "dist"
+  $resolvedAppDir = [System.IO.Path]::GetFullPath($AppDir)
+  $resolvedDistDir = [System.IO.Path]::GetFullPath($distDir)
+  if (-not $resolvedDistDir.StartsWith($resolvedAppDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to clean unexpected dist path: $resolvedDistDir"
+  }
+  Remove-Item -LiteralPath $distDir -Recurse -Force -ErrorAction SilentlyContinue
+
+  Invoke-Checked "npm" @("run", "build")
 
   if (-not (Test-Path -LiteralPath "android")) {
-    npx cap add android
+    Invoke-Checked "npx" @("cap", "add", "android")
   }
 
-  npx cap sync android
+  Invoke-Checked "npx" @("cap", "sync", "android")
 
   Push-Location "android"
   try {
     if ($Release) {
-      .\gradlew.bat --no-daemon assembleRelease
+      Invoke-Checked ".\gradlew.bat" @("--no-daemon", "assembleRelease")
     } else {
-      .\gradlew.bat --no-daemon assembleDebug
+      Invoke-Checked ".\gradlew.bat" @("--no-daemon", "assembleDebug")
     }
-    exit $LASTEXITCODE
   } finally {
     Pop-Location
   }

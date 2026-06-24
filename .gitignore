@@ -1,5 +1,6 @@
 app/node_modules/
 app/dist/
+app/public/flasher/
 app/android/.gradle/
 app/android/app/build/
 app/android/build/
