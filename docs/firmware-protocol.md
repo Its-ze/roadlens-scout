@@ -2,19 +2,20 @@
 
 The ESP32 advertises as `RoadLensESP32`.
 
-Firmware `0.1.10` starts in BLE-first mode: it advertises `RoadLensESP32`
+Firmware `0.1.11` starts in BLE-first mode: it advertises `RoadLensESP32`
 without running Wi-Fi promiscuous scanning, then starts passive Wi-Fi detection
 only after the phone has connected, subscribed to notifications, and sent
-`start-scan`. On disconnect, Wi-Fi monitor mode is stopped and BLE advertising
-restarts.
+`start-scan`. If Android times out the first command write, the firmware
+auto-starts scanning after a short connect delay. On disconnect, Wi-Fi monitor
+mode is stopped and BLE advertising restarts.
 
-Firmware `0.1.10` scans 2.4 GHz channels 1-11, uses the public Flock-style
+Firmware `0.1.11` scans 2.4 GHz channels 1-11, uses the public Flock-style
 Wi-Fi signature set, and reports raw scan counters so the app can distinguish
 "no match" from "not seeing frames." It also accepts an app-synced signature
 feed and stores it in ESP32 preferences, falling back to the built-in set when
 no synced feed exists.
 
-Firmware `0.1.10` also supports BLE-orchestrated OTA updates. The app sends Wi-Fi
+Firmware `0.1.11` also supports BLE-orchestrated OTA updates. The app sends Wi-Fi
 credentials and the expected firmware size/SHA256 in compact staged commands.
 The ESP32 downloads its chip-specific firmware from RoadLens Pages, verifies the
 SHA256 before finalizing the update, and reboots after success.
@@ -38,13 +39,13 @@ Detection example:
 Status example:
 
 ```json
-{"type":"status","device":"RoadLensESP32","reason":"heartbeat","uptime_ms":123456,"channel":6,"detections":3,"signature_count":42,"ble_connected":true,"sniffer_active":true,"frames_seen":1800,"mgmt_frames":700,"data_frames":1100,"wildcard_probes":8,"candidate_frames":3,"queue_drops":0,"firmware_version":"0.1.10","chip_family":"ESP32","ota_supported":true,"ota_in_progress":false,"ota_version":"","signature_version":"2026.06.24.209126de","signature_source":"synced","signature_sync_supported":true}
+{"type":"status","device":"RoadLensESP32","reason":"heartbeat","uptime_ms":123456,"channel":6,"detections":3,"signature_count":42,"ble_connected":true,"sniffer_active":true,"frames_seen":1800,"mgmt_frames":700,"data_frames":1100,"wildcard_probes":8,"candidate_frames":3,"queue_drops":0,"firmware_version":"0.1.11","chip_family":"ESP32","ota_supported":true,"ota_in_progress":false,"ota_version":"","signature_version":"2026.06.24.209126de","signature_source":"synced","signature_sync_supported":true}
 ```
 
 OTA status example:
 
 ```json
-{"type":"ota","state":"download","detail":"Downloading firmware","progress":50,"version":"0.1.10","chip_family":"ESP32"}
+{"type":"ota","state":"download","detail":"Downloading firmware","progress":50,"version":"0.1.11","chip_family":"ESP32"}
 ```
 
 Signature status example:

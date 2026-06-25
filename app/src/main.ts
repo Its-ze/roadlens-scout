@@ -33,6 +33,8 @@ const OTA_HASH_CHUNK_CHARS = 12;
 const OTA_COMMAND_DELAY_MS = 45;
 const SIGNATURE_COMMAND_DELAY_MS = 35;
 const MAX_SENSOR_SIGNATURE_PREFIXES = 96;
+const COMMAND_WRITE_TIMEOUT_MS = 4500;
+const COMMAND_WRITE_FALLBACK_TIMEOUT_MS = 7500;
 
 const DEFAULT_WIFI_PREFIXES = [
   '70:c9:4e', '3c:91:80', 'd8:f3:bc', '80:30:49', 'b8:35:32',
@@ -576,9 +578,9 @@ async function connectSensor() {
     setSensorState('online', `${device.name ?? SENSOR_NAME} connected`);
     signalText.textContent = 'Linked';
     updateConnectionButton();
-    await sendCommand('status');
+    await sendCommandWithRetry('status', 2);
     await delay(150);
-    await sendCommand('start-scan');
+    await sendCommandWithRetry('start-scan', 2);
   } catch (error) {
     if (device) {
       await BleClient.disconnect(device.deviceId).catch(() => undefined);
@@ -743,12 +745,54 @@ async function sendCommand(command: string) {
     return;
   }
   const bytes = encoder.encode(`${command}\n`);
-  await BleClient.write(
-    connectedDevice.deviceId,
-    SERVICE_UUID,
-    COMMAND_UUID,
-    new DataView(bytes.buffer),
-  );
+  const value = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  try {
+    await BleClient.writeWithoutResponse(
+      connectedDevice.deviceId,
+      SERVICE_UUID,
+      COMMAND_UUID,
+      value,
+      { timeout: COMMAND_WRITE_TIMEOUT_MS },
+    );
+  } catch (noResponseError) {
+    try {
+      await BleClient.write(
+        connectedDevice.deviceId,
+        SERVICE_UUID,
+        COMMAND_UUID,
+        value,
+        { timeout: COMMAND_WRITE_FALLBACK_TIMEOUT_MS },
+      );
+    } catch (withResponseError) {
+      throw new Error(commandWriteErrorMessage(command, noResponseError, withResponseError));
+    }
+  }
+}
+
+async function sendCommandWithRetry(command: string, attempts: number) {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await sendCommand(command);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await delay(250 * attempt);
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`Command ${command} failed`);
+}
+
+function commandWriteErrorMessage(command: string, noResponseError: unknown, withResponseError: unknown) {
+  const detail =
+    withResponseError instanceof Error
+      ? withResponseError.message
+      : noResponseError instanceof Error
+        ? noResponseError.message
+        : 'BLE write failed';
+  return `${command} write failed: ${detail}`;
 }
 
 async function refreshUsbDevices() {

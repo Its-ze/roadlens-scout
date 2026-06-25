@@ -12,7 +12,7 @@
 #include "signatures.h"
 
 #ifndef ROADLENS_FIRMWARE_VERSION
-#define ROADLENS_FIRMWARE_VERSION "0.1.10"
+#define ROADLENS_FIRMWARE_VERSION "0.1.11"
 #endif
 
 #ifndef ROADLENS_CHIP_FAMILY
@@ -62,6 +62,7 @@ static NimBLECharacteristic *notifyCharacteristic = nullptr;
 static bool bleConnected = false;
 static bool wifiSnifferActive = false;
 static bool snifferStartRequested = false;
+static uint32_t snifferStartAtMs = 0;
 static uint8_t channelIndex = 0;
 static uint32_t lastChannelHopMs = 0;
 static uint32_t lastStatusMs = 0;
@@ -569,12 +570,14 @@ static void emitDetection(const DetectionEvent &event) {
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer *) override {
     bleConnected = true;
-    snifferStartRequested = false;
+    snifferStartRequested = true;
+    snifferStartAtMs = millis() + 4500;
   }
 
   void onDisconnect(NimBLEServer *) override {
     bleConnected = false;
     snifferStartRequested = false;
+    snifferStartAtMs = 0;
     stopSniffer();
     NimBLEDevice::startAdvertising();
   }
@@ -933,9 +936,11 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
       emitStatus("command");
     } else if (lowerCommand == "start-scan") {
       snifferStartRequested = true;
+      snifferStartAtMs = millis() + 250;
       emitStatus("scan-starting");
     } else if (lowerCommand == "stop-scan") {
       snifferStartRequested = false;
+      snifferStartAtMs = 0;
       stopSniffer();
       emitStatus("scan-stopped");
     } else if (lowerCommand == "reset-counts") {
@@ -1038,7 +1043,8 @@ void loop() {
     performOtaUpdate();
   }
 
-  if (bleConnected && snifferStartRequested && !wifiSnifferActive && !otaInProgress) {
+  if (bleConnected && snifferStartRequested && !wifiSnifferActive && !otaInProgress &&
+      static_cast<int32_t>(nowMs - snifferStartAtMs) >= 0) {
     setupSniffer();
     emitStatus("scan-started");
   }
