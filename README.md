@@ -59,7 +59,7 @@ USB upload:
 Replace `COM15` with the live ESP32 port.
 
 After flashing, reset or power-cycle the board and look for the BLE device name
-`RoadLensESP32` from the Android app. Firmware `0.1.11` keeps Wi-Fi monitor mode
+`RoadLensESP32` from the Android app. Firmware `0.1.12` keeps Wi-Fi monitor mode
 off until the phone has connected and subscribed to notifications, then the app
 sends `start-scan` to begin passive detection. If Android times out that first
 BLE command write, the sensor auto-starts scanning after a short connect delay.
@@ -112,9 +112,23 @@ known Flock-style BLE names, manufacturer IDs, MAC prefixes, and Raven service
 UUIDs from the active signature feed, then saves any matches to the same
 GPS-tagged map as ESP32 Wi-Fi hits.
 
+### Public Camera Seed Map and Field Reports
+
+RoadLens also bundles and syncs a public camera seed map from OpenStreetMap-
+derived DeFlock ALPR data. The app uses the seed map locally to show known
+Flock-style camera sites, recognize when the phone is near one, attach the
+nearest seed to new ESP32/phone sightings, and record rate-limited local field
+checks while nearby. The seed feed is stored as `camera-seeds.json`, copied into
+the APK, published on GitHub Pages, and refreshed by the `Update camera seed map`
+workflow.
+
+RoadLens does not silently upload GPS traces. The Scout Board `Report` button
+writes a GeoJSON field report and opens a prefilled GitHub issue draft so the
+operator can review and attach/share the report intentionally.
+
 ### Sensor OTA Updates
 
-Firmware `0.1.11` supports in-app ESP32 firmware updates after the board has been
+Firmware `0.1.12` supports in-app ESP32 firmware updates after the board has been
 flashed once by USB or the web flasher. When the app connects to a sensor, it
 reads the sensor firmware version and chip family, checks RoadLens Pages
 metadata, and prompts if a newer matching firmware build is available.

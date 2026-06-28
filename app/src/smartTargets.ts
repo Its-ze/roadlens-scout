@@ -18,6 +18,9 @@ export type Spot = {
   channel: number | null;
   confidence: number;
   wildcardProbe: boolean;
+  seedId?: string;
+  seedLabel?: string;
+  seedDistanceMeters?: number | null;
 };
 
 export type LocatedSpot = Spot & {

@@ -18,6 +18,7 @@ const SERVICE_UUID = '7d1d0001-52a1-4b81-9fd2-fd7ec3f50100';
 const NOTIFY_UUID = '7d1d0002-52a1-4b81-9fd2-fd7ec3f50100';
 const COMMAND_UUID = '7d1d0003-52a1-4b81-9fd2-fd7ec3f50100';
 const STORAGE_KEY = 'roadlens.spots.v1';
+const FIELD_OBSERVATION_STORAGE_KEY = 'roadlens.field-observations.v1';
 const APP_VERSION = __APP_VERSION__;
 const UPDATE_REPO = __GITHUB_REPO__;
 const APP_NAME = 'RoadLens Scout';
@@ -26,6 +27,7 @@ const MAX_STORED_SPOTS = 2000;
 const PHONE_FLASHER_URL = 'https://its-ze.github.io/roadlens-scout/flasher/';
 const SITE_META_URL = 'https://its-ze.github.io/roadlens-scout/site-meta.json';
 const SIGNATURE_FEED_URL = 'https://its-ze.github.io/roadlens-scout/signatures.json';
+const CAMERA_SEED_FEED_URL = 'https://its-ze.github.io/roadlens-scout/camera-seeds.json';
 const SIGNATURE_CACHE_KEY = 'roadlens.signatures.v1';
 const PHONE_BLE_SWEEP_MS = 15000;
 const OTA_CREDENTIAL_CHUNK_BYTES = 6;
@@ -35,6 +37,13 @@ const SIGNATURE_COMMAND_DELAY_MS = 35;
 const MAX_SENSOR_SIGNATURE_PREFIXES = 96;
 const COMMAND_WRITE_TIMEOUT_MS = 4500;
 const COMMAND_WRITE_FALLBACK_TIMEOUT_MS = 7500;
+const MAX_FIELD_OBSERVATIONS = 2000;
+const CAMERA_SEED_RENDER_MIN_ZOOM = 11;
+const CAMERA_SEED_RENDER_LIMIT = 450;
+const CAMERA_SEED_NEAR_RADIUS_METERS = 260;
+const CAMERA_SEED_VISIT_RADIUS_METERS = 160;
+const CAMERA_SEED_VISIT_COOLDOWN_MS = 10 * 60 * 1000;
+const CAMERA_SEED_GRID_DEGREES = 0.1;
 
 const DEFAULT_WIFI_PREFIXES = [
   '70:c9:4e', '3c:91:80', 'd8:f3:bc', '80:30:49', 'b8:35:32',
@@ -225,6 +234,14 @@ type SiteMeta = {
     bleManufacturerIds: number;
     ravenServiceUuids?: number;
   };
+  cameraSeeds?: {
+    path: string;
+    version: string;
+    bytes: number;
+    sha256: string;
+    points: number;
+    sources: number;
+  };
 };
 
 type SignaturePrefix = {
@@ -260,14 +277,76 @@ type SignatureIndex = {
   ravenServiceUuids: Set<string>;
 };
 
+type CameraSeedSource = {
+  name?: string;
+  url?: string;
+  dataUrl?: string;
+  sha256?: string;
+  license?: string;
+};
+
+type CameraSeed = {
+  id: string;
+  lat: number;
+  lon: number;
+  brand?: string;
+  operator?: string;
+  source?: string;
+  direction?: number;
+  directionCardinal?: string;
+  surveillanceZone?: string;
+  mountType?: string;
+  ref?: string;
+  osmTimestamp?: string;
+  osmVersion?: number;
+};
+
+type CameraSeedFeed = {
+  schema: number;
+  name?: string;
+  version: string;
+  generatedAt?: string;
+  sources?: CameraSeedSource[];
+  pointCount?: number;
+  points: CameraSeed[];
+};
+
+type CameraSeedIndex = {
+  gridSize: number;
+  cells: Map<string, CameraSeed[]>;
+};
+
+type NearbyCameraSeed = {
+  seed: CameraSeed;
+  distanceMeters: number;
+};
+
+type FieldObservation = {
+  id: string;
+  createdAt: string;
+  source: 'seed-proximity';
+  seedId: string;
+  seedLabel: string;
+  lat: number;
+  lon: number;
+  accuracy: number | null;
+  distanceMeters: number;
+  sensorConnected: boolean;
+  firmwareVersion?: string;
+  signalCount: number;
+};
+
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
 let map: L.Map;
+let seedLayer: L.LayerGroup;
 let markerLayer: L.LayerGroup;
 let targetLayer: L.LayerGroup;
 let positionLayer: L.LayerGroup;
 let spots: Spot[] = readStoredSpots();
+let fieldObservations: FieldObservation[] = readStoredFieldObservations();
+let seedObservationTimes = buildSeedObservationTimes(fieldObservations);
 let smartTargets: SmartTarget[] = [];
 let notificationBuffer = '';
 let connectedDevice: BleDevice | null = null;
@@ -287,6 +366,10 @@ let signatureIndex: SignatureIndex = buildSignatureIndex(activeSignatures);
 let signatureFetchPromise: Promise<SignatureFeed> | null = null;
 let signatureSyncBusy = false;
 let signatureSyncedForKey = '';
+let activeCameraSeeds: CameraSeedFeed = buildEmptyCameraSeedFeed();
+let cameraSeedIndex: CameraSeedIndex = buildCameraSeedIndex(activeCameraSeeds.points);
+let cameraSeedFetchPromise: Promise<CameraSeedFeed> | null = null;
+let nearestCameraSeed: NearbyCameraSeed | null = null;
 
 type WifiReadoutState = 'unknown' | 'connected' | 'limited' | 'offline' | 'error';
 
@@ -343,6 +426,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <div class="map-legend">
           <span><b class="legend-dot raw"></b>Signal</span>
           <span><b class="legend-dot target"></b>Estimate</span>
+          <span><b class="legend-dot seed"></b>Known</span>
           <span><b class="legend-dot you"></b>You</span>
         </div>
       </div>
@@ -353,7 +437,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <h2>Scout Board</h2>
             <p id="targetSummary">No repeat targets yet</p>
           </div>
-          <button id="statusButton" class="ghost"><i data-lucide="refresh-cw"></i><span>Status</span></button>
+          <div class="feed-tools">
+            <button id="seedRefreshButton" class="ghost"><i data-lucide="database"></i><span>Seeds</span></button>
+            <button id="reportButton" class="ghost"><i data-lucide="send"></i><span>Report</span></button>
+            <button id="statusButton" class="ghost"><i data-lucide="refresh-cw"></i><span>Status</span></button>
+          </div>
         </div>
 
         <section class="panel-section setup-panel">
@@ -384,7 +472,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
                 <span>Not checked</span>
               </div>
             </div>
-            <div class="module-fields">
+            <form id="wifiCredentialForm" class="module-fields">
               <label>
                 <span>SSID</span>
                 <input id="wifiSsidInput" type="text" autocomplete="off" inputmode="text" />
@@ -393,7 +481,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
                 <span>Password</span>
                 <input id="wifiPasswordInput" type="password" autocomplete="current-password" />
               </label>
-            </div>
+            </form>
             <div class="setup-actions module-actions">
               <button id="wifiFillButton"><i data-lucide="wifi"></i><span>Wi-Fi</span></button>
               <button id="moduleOtaButton" class="primary"><i data-lucide="upload-cloud"></i><span>Sensor OTA</span></button>
@@ -480,6 +568,15 @@ document.querySelector<HTMLButtonElement>('#updateButton')!.addEventListener('cl
 document.querySelector<HTMLButtonElement>('#exportButton')!.addEventListener('click', exportGeoJson);
 document.querySelector<HTMLButtonElement>('#clearButton')!.addEventListener('click', clearSpots);
 document.querySelector<HTMLButtonElement>('#statusButton')!.addEventListener('click', () => sendCommand('status'));
+document.querySelector<HTMLFormElement>('#wifiCredentialForm')!.addEventListener('submit', (event) => {
+  event.preventDefault();
+});
+document.querySelector<HTMLButtonElement>('#seedRefreshButton')!.addEventListener('click', () => {
+  void refreshCameraSeedFeed({ quiet: false });
+});
+document.querySelector<HTMLButtonElement>('#reportButton')!.addEventListener('click', () => {
+  void shareFieldReport();
+});
 usbScanButton.addEventListener('click', () => {
   void refreshUsbDevices();
 });
@@ -510,6 +607,7 @@ render();
 void startLocationWatch();
 void refreshWifiReadout({ quiet: true });
 void refreshSignatureFeed({ quiet: true });
+void refreshCameraSeedFeed({ quiet: true });
 
 function setMobileTab(tab: string) {
   shell.dataset.mobileTab = tab;
@@ -538,9 +636,11 @@ function initMap() {
     attribution: '&copy; OpenStreetMap contributors',
   }).addTo(map);
 
+  seedLayer = L.layerGroup().addTo(map);
   markerLayer = L.layerGroup().addTo(map);
   targetLayer = L.layerGroup().addTo(map);
   positionLayer = L.layerGroup().addTo(map);
+  map.on('moveend zoomend', renderSeedMarkers);
 }
 
 async function connectSensor() {
@@ -1358,9 +1458,9 @@ async function fetchSiteMeta(): Promise<SiteMeta> {
   }
 
   const response = await fetch(`${SITE_META_URL}?t=${Date.now()}`, {
+    cache: 'no-store',
     headers: {
       Accept: 'application/json',
-      'Cache-Control': 'no-cache',
     },
   });
   if (!response.ok) {
@@ -1441,8 +1541,8 @@ async function refreshSignatureFeed(options: { quiet?: boolean } = {}): Promise<
   signatureFetchPromise = (async () => {
     const cacheBust = Date.now();
     const candidates = [
-      `${SIGNATURE_FEED_URL}?t=${cacheBust}`,
       `/signatures.json?t=${cacheBust}`,
+      `${SIGNATURE_FEED_URL}?t=${cacheBust}`,
     ];
 
     let lastError: unknown = null;
@@ -1452,7 +1552,6 @@ async function refreshSignatureFeed(options: { quiet?: boolean } = {}): Promise<
           cache: 'no-store',
           headers: {
             Accept: 'application/json',
-            'Cache-Control': 'no-cache',
           },
         });
         if (!response.ok) {
@@ -1597,6 +1696,247 @@ function dedupeNumbers(values: number[]) {
 function isLocalAdministeredPrefix(prefix: string) {
   const firstByte = Number.parseInt(prefix.slice(0, 2), 16);
   return Number.isFinite(firstByte) && (firstByte & 0x02) !== 0;
+}
+
+function buildEmptyCameraSeedFeed(): CameraSeedFeed {
+  return {
+    schema: 1,
+    name: 'RoadLens Scout Camera Seeds',
+    version: `empty-${APP_VERSION}`,
+    points: [],
+  };
+}
+
+function activateCameraSeedFeed(feed: CameraSeedFeed) {
+  activeCameraSeeds = feed;
+  cameraSeedIndex = buildCameraSeedIndex(feed.points);
+  render();
+  if (lastPosition) {
+    void handlePositionUpdate(lastPosition);
+  }
+}
+
+async function refreshCameraSeedFeed(options: { quiet?: boolean } = {}): Promise<CameraSeedFeed> {
+  if (cameraSeedFetchPromise) {
+    return cameraSeedFetchPromise;
+  }
+
+  cameraSeedFetchPromise = (async () => {
+    const cacheBust = Date.now();
+    const candidates = [
+      `/camera-seeds.json?t=${cacheBust}`,
+      `${CAMERA_SEED_FEED_URL}?t=${cacheBust}`,
+    ];
+
+    let lastError: unknown = null;
+    for (const url of candidates) {
+      try {
+        const response = await fetch(url, {
+          cache: 'default',
+          headers: {
+            Accept: 'application/json',
+          },
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const feed = normalizeCameraSeedFeed(await response.json());
+        activateCameraSeedFeed(feed);
+        if (!options.quiet) {
+          setSensorState('online', `${feed.points.length.toLocaleString()} camera seeds loaded`);
+        }
+        return feed;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!options.quiet) {
+      setSensorState('error', lastError instanceof Error ? lastError.message : 'Camera seed refresh failed');
+    }
+    return activeCameraSeeds;
+  })();
+
+  try {
+    return await cameraSeedFetchPromise;
+  } finally {
+    cameraSeedFetchPromise = null;
+  }
+}
+
+function normalizeCameraSeedFeed(raw: unknown): CameraSeedFeed {
+  const value = raw as Partial<CameraSeedFeed> | null;
+  if (!value || typeof value !== 'object' || !Array.isArray(value.points)) {
+    throw new Error('Invalid camera seed feed');
+  }
+
+  const points: CameraSeed[] = [];
+  for (const item of value.points) {
+    const seed = normalizeCameraSeed(item);
+    if (seed) {
+      points.push(seed);
+    }
+  }
+  if (points.length < 1) {
+    throw new Error('Camera seed feed is empty');
+  }
+
+  return {
+    schema: Number(value.schema) || 1,
+    name: value.name,
+    version: typeof value.version === 'string' && value.version.trim() ? value.version.trim() : 'unknown',
+    generatedAt: value.generatedAt,
+    sources: Array.isArray(value.sources) ? value.sources : undefined,
+    pointCount: Number(value.pointCount) || points.length,
+    points,
+  };
+}
+
+function normalizeCameraSeed(raw: unknown): CameraSeed | null {
+  const value = raw as Partial<CameraSeed> | null;
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const lat = Number(value.lat);
+  const lon = Number(value.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+    return null;
+  }
+  const id = typeof value.id === 'string' && value.id.trim()
+    ? value.id.trim()
+    : `seed:${lat.toFixed(6)}:${lon.toFixed(6)}`;
+  return {
+    id,
+    lat,
+    lon,
+    brand: cleanOptionalString(value.brand),
+    operator: cleanOptionalString(value.operator),
+    source: cleanOptionalString(value.source),
+    direction: typeof value.direction === 'number' && Number.isFinite(value.direction) ? value.direction : undefined,
+    directionCardinal: cleanOptionalString(value.directionCardinal),
+    surveillanceZone: cleanOptionalString(value.surveillanceZone),
+    mountType: cleanOptionalString(value.mountType),
+    ref: cleanOptionalString(value.ref),
+    osmTimestamp: cleanOptionalString(value.osmTimestamp),
+    osmVersion: typeof value.osmVersion === 'number' && Number.isFinite(value.osmVersion) ? value.osmVersion : undefined,
+  };
+}
+
+function cleanOptionalString(value: unknown) {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const text = value.trim();
+  return text || undefined;
+}
+
+function buildCameraSeedIndex(points: CameraSeed[]): CameraSeedIndex {
+  const cells = new Map<string, CameraSeed[]>();
+  for (const seed of points) {
+    const key = cameraSeedGridKey(seed.lat, seed.lon, CAMERA_SEED_GRID_DEGREES);
+    const cell = cells.get(key);
+    if (cell) {
+      cell.push(seed);
+    } else {
+      cells.set(key, [seed]);
+    }
+  }
+  return { gridSize: CAMERA_SEED_GRID_DEGREES, cells };
+}
+
+function cameraSeedGridKey(lat: number, lon: number, gridSize: number) {
+  return `${Math.floor(lat / gridSize)},${Math.floor(lon / gridSize)}`;
+}
+
+function queryCameraSeedsInBounds(bounds: L.LatLngBounds) {
+  const results: CameraSeed[] = [];
+  const grid = cameraSeedIndex.gridSize;
+  const south = Math.floor(bounds.getSouth() / grid);
+  const north = Math.floor(bounds.getNorth() / grid);
+  const west = Math.floor(bounds.getWest() / grid);
+  const east = Math.floor(bounds.getEast() / grid);
+
+  for (let latCell = south; latCell <= north; latCell++) {
+    for (let lonCell = west; lonCell <= east; lonCell++) {
+      const cell = cameraSeedIndex.cells.get(`${latCell},${lonCell}`);
+      if (!cell) {
+        continue;
+      }
+      for (const seed of cell) {
+        if (bounds.contains([seed.lat, seed.lon])) {
+          results.push(seed);
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+function findNearestCameraSeed(lat: number, lon: number, maxMeters: number): NearbyCameraSeed | null {
+  if (!activeCameraSeeds.points.length) {
+    return null;
+  }
+  const latDelta = maxMeters / 111320;
+  const lonScale = Math.max(0.2, Math.cos((lat * Math.PI) / 180));
+  const lonDelta = maxMeters / (111320 * lonScale);
+  const bounds = L.latLngBounds([lat - latDelta, lon - lonDelta], [lat + latDelta, lon + lonDelta]);
+  let best: NearbyCameraSeed | null = null;
+  for (const seed of queryCameraSeedsInBounds(bounds)) {
+    const distance = geoDistanceMeters(lat, lon, seed.lat, seed.lon);
+    if (distance <= maxMeters && (!best || distance < best.distanceMeters)) {
+      best = { seed, distanceMeters: distance };
+    }
+  }
+  return best;
+}
+
+async function maybeRecordSeedObservation(nearby: NearbyCameraSeed, position: Position) {
+  if (nearby.distanceMeters > CAMERA_SEED_VISIT_RADIUS_METERS) {
+    return;
+  }
+
+  const now = Date.now();
+  const lastSeen = seedObservationTimes.get(nearby.seed.id) ?? 0;
+  if (now - lastSeen < CAMERA_SEED_VISIT_COOLDOWN_MS) {
+    return;
+  }
+
+  const coords = position.coords;
+  const observation: FieldObservation = {
+    id: crypto.randomUUID(),
+    createdAt: new Date(now).toISOString(),
+    source: 'seed-proximity',
+    seedId: nearby.seed.id,
+    seedLabel: cameraSeedLabel(nearby.seed),
+    lat: coords.latitude,
+    lon: coords.longitude,
+    accuracy: coords.accuracy ?? null,
+    distanceMeters: Math.round(nearby.distanceMeters),
+    sensorConnected: Boolean(connectedDevice),
+    firmwareVersion: lastSensorStatus?.firmware_version,
+    signalCount: spots.length,
+  };
+
+  fieldObservations = [observation, ...fieldObservations].slice(0, MAX_FIELD_OBSERVATIONS);
+  seedObservationTimes.set(nearby.seed.id, now);
+  await persistFieldObservations();
+  render();
+}
+
+function cameraSeedLabel(seed: CameraSeed) {
+  return seed.operator || seed.brand || 'Known ALPR';
+}
+
+function geoDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const radius = 6371000;
+  const toRadians = Math.PI / 180;
+  const dLat = (lat2 - lat1) * toRadians;
+  const dLon = (lon2 - lon1) * toRadians;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * toRadians) * Math.cos(lat2 * toRadians) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 async function maybeSyncSensorSignatures(status: SensorStatus) {
@@ -1829,6 +2169,9 @@ function normalizeMac(value: string | undefined) {
 async function saveDetection(detection: DetectionMessage) {
   const position = await getBestPosition();
   const coords = position?.coords;
+  const nearbySeed = coords
+    ? findNearestCameraSeed(coords.latitude, coords.longitude, CAMERA_SEED_NEAR_RADIUS_METERS)
+    : null;
   const spot: Spot = {
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
@@ -1844,6 +2187,9 @@ async function saveDetection(detection: DetectionMessage) {
     channel: detection.channel ?? null,
     confidence: detection.confidence ?? 50,
     wildcardProbe: detection.wildcard_probe ?? false,
+    seedId: nearbySeed?.seed.id,
+    seedLabel: nearbySeed ? cameraSeedLabel(nearbySeed.seed) : undefined,
+    seedDistanceMeters: nearbySeed ? Math.round(nearbySeed.distanceMeters) : null,
   };
 
   spots = [spot, ...spots].slice(0, MAX_STORED_SPOTS);
@@ -1858,7 +2204,9 @@ async function saveDetection(detection: DetectionMessage) {
         : 'New signal saved';
     map.setView([focusTarget.lat, focusTarget.lon], Math.max(map.getZoom(), 17), { animate: true });
   } else if (spot.lat != null && spot.lon != null) {
-    mapFocusText.textContent = 'New signal saved';
+    mapFocusText.textContent = nearbySeed
+      ? `Signal saved near ${cameraSeedLabel(nearbySeed.seed)}`
+      : 'New signal saved';
     map.setView([spot.lat, spot.lon], Math.max(map.getZoom(), 17), { animate: true });
   }
 }
@@ -1870,6 +2218,7 @@ async function saveManualSpot() {
     setSensorState('error', 'No GPS fix');
     return;
   }
+  const nearbySeed = findNearestCameraSeed(coords.latitude, coords.longitude, CAMERA_SEED_NEAR_RADIUS_METERS);
 
   const spot: Spot = {
     id: crypto.randomUUID(),
@@ -1886,12 +2235,17 @@ async function saveManualSpot() {
     channel: null,
     confidence: 100,
     wildcardProbe: false,
+    seedId: nearbySeed?.seed.id,
+    seedLabel: nearbySeed ? cameraSeedLabel(nearbySeed.seed) : undefined,
+    seedDistanceMeters: nearbySeed ? Math.round(nearbySeed.distanceMeters) : null,
   };
 
   spots = [spot, ...spots].slice(0, MAX_STORED_SPOTS);
   await persistSpots();
   render();
-  mapFocusText.textContent = 'Manual spot saved';
+  mapFocusText.textContent = nearbySeed
+    ? `Manual spot near ${cameraSeedLabel(nearbySeed.seed)}`
+    : 'Manual spot saved';
   map.setView([coords.latitude, coords.longitude], 18, { animate: true });
 }
 
@@ -2008,9 +2362,7 @@ async function startLocationWatch() {
       { enableHighAccuracy: true, timeout: 12000, maximumAge: 3000 },
       (position, error) => {
         if (position) {
-          lastPosition = position;
-          updateGpsText(position);
-          renderPosition();
+          void handlePositionUpdate(position);
         } else if (error) {
           gpsText.textContent = 'Waiting';
         }
@@ -2033,9 +2385,7 @@ async function getBestPosition(forceFresh = false): Promise<Position | null> {
       timeout: 12000,
       maximumAge: 3000,
     });
-    lastPosition = position;
-    updateGpsText(position);
-    renderPosition();
+    await handlePositionUpdate(position);
     return position;
   } catch {
     return lastPosition;
@@ -2044,6 +2394,21 @@ async function getBestPosition(forceFresh = false): Promise<Position | null> {
 
 function updateGpsText(position: Position) {
   gpsText.textContent = `${Math.round(position.coords.accuracy ?? 0)}m`;
+}
+
+async function handlePositionUpdate(position: Position) {
+  lastPosition = position;
+  updateGpsText(position);
+  renderPosition();
+  renderSeedMarkers();
+
+  const coords = position.coords;
+  const nearby = findNearestCameraSeed(coords.latitude, coords.longitude, CAMERA_SEED_NEAR_RADIUS_METERS);
+  nearestCameraSeed = nearby;
+  if (nearby) {
+    mapFocusText.textContent = `Near known ${cameraSeedLabel(nearby.seed)} (${formatMeters(nearby.distanceMeters)})`;
+    await maybeRecordSeedObservation(nearby, position);
+  }
 }
 
 function render() {
@@ -2055,11 +2420,12 @@ function render() {
   targetCount.textContent = String(visibleTargets.length);
   targetSummary.textContent =
     visibleTargets.length > 0
-      ? `${visibleTargets.length} estimated ${visibleTargets.length === 1 ? 'point' : 'points'} from ${located.length} mapped signals`
-      : 'No repeat targets yet';
+      ? `${visibleTargets.length} estimated ${visibleTargets.length === 1 ? 'point' : 'points'} from ${located.length} signals | ${fieldObservations.length} field checks`
+      : `${activeCameraSeeds.points.length ? `${activeCameraSeeds.points.length.toLocaleString()} known seeds | ` : ''}${fieldObservations.length ? `${fieldObservations.length} field checks` : 'No repeat targets yet'}`;
 
   markerLayer.clearLayers();
   targetLayer.clearLayers();
+  renderSeedMarkers();
 
   for (const spot of located) {
     const marker = L.circleMarker([spot.lat, spot.lon], {
@@ -2118,8 +2484,8 @@ function render() {
                 </div>
                 <p>${target.sightings} hits | ${formatMeters(target.radius)} estimate | ${formatAgo(target.lastAt)}</p>
                 <footer>
-                  <span>${escapeHtml(formatRssi(target.bestRssi))}</span>
-                  <span>${escapeHtml(target.macs.slice(0, 2).join(', ') || 'area match')}</span>
+                <span>${escapeHtml(formatRssi(target.bestRssi))}</span>
+                <span>${escapeHtml(target.macs.slice(0, 2).join(', ') || 'area match')}</span>
                 </footer>
               </div>
             </article>
@@ -2143,7 +2509,11 @@ function render() {
               }</p>
               <footer>
                 <span>${spot.confidence}%</span>
-                <span>${spot.accuracy != null ? `${Math.round(spot.accuracy)}m` : 'no gps'}</span>
+                <span>${
+                  spot.seedLabel
+                    ? `${escapeHtml(spot.seedLabel)} ${spot.seedDistanceMeters != null ? formatMeters(spot.seedDistanceMeters) : ''}`
+                    : spot.accuracy != null ? `${Math.round(spot.accuracy)}m` : 'no gps'
+                }</span>
               </footer>
             </article>
           `,
@@ -2180,12 +2550,46 @@ function renderPosition() {
   }).addTo(positionLayer);
 }
 
+function renderSeedMarkers() {
+  if (!seedLayer || !map) {
+    return;
+  }
+
+  seedLayer.clearLayers();
+  if (!activeCameraSeeds.points.length || map.getZoom() < CAMERA_SEED_RENDER_MIN_ZOOM) {
+    if (nearestCameraSeed) {
+      renderSingleSeedMarker(nearestCameraSeed.seed, nearestCameraSeed.distanceMeters, true);
+    }
+    return;
+  }
+
+  const bounds = map.getBounds().pad(0.08);
+  const seeds = queryCameraSeedsInBounds(bounds).slice(0, CAMERA_SEED_RENDER_LIMIT);
+  for (const seed of seeds) {
+    renderSingleSeedMarker(seed, nearestCameraSeed?.seed.id === seed.id ? nearestCameraSeed.distanceMeters : null, false);
+  }
+}
+
+function renderSingleSeedMarker(seed: CameraSeed, distanceMeters: number | null, highlighted: boolean) {
+  const marker = L.circleMarker([seed.lat, seed.lon], {
+    radius: highlighted ? 8 : 5,
+    color: highlighted ? '#eaf7ff' : '#9ba8ff',
+    fillColor: highlighted ? '#ffd166' : '#9ba8ff',
+    fillOpacity: highlighted ? 0.94 : 0.48,
+    opacity: highlighted ? 1 : 0.72,
+    weight: highlighted ? 3 : 2,
+  });
+  marker.bindPopup(renderCameraSeedPopup(seed, distanceMeters));
+  marker.addTo(seedLayer);
+}
+
 function renderSpotPopup(spot: Spot) {
   return (
     `<strong>${escapeHtml(prettyLabel(spot.label))}</strong><br>` +
     `${escapeHtml(spot.mac)} ${spot.channel ? `ch${spot.channel}` : ''}<br>` +
     `${new Date(spot.createdAt).toLocaleString()}<br>` +
-    `confidence ${spot.confidence}% ${spot.rssi != null ? `| ${spot.rssi} dBm` : ''}`
+    `confidence ${spot.confidence}% ${spot.rssi != null ? `| ${spot.rssi} dBm` : ''}` +
+    `${spot.seedLabel ? `<br>near ${escapeHtml(spot.seedLabel)} ${spot.seedDistanceMeters != null ? `(${formatMeters(spot.seedDistanceMeters)})` : ''}` : ''}`
   );
 }
 
@@ -2196,6 +2600,22 @@ function renderTargetPopup(target: SmartTarget) {
     `estimate radius ${formatMeters(target.radius)}<br>` +
     `${escapeHtml(formatRssi(target.bestRssi))}<br>` +
     `${escapeHtml(target.macs.slice(0, 3).join(', ') || 'area match')}`
+  );
+}
+
+function renderCameraSeedPopup(seed: CameraSeed, distanceMeters: number | null) {
+  const details = [
+    seed.operator ? `operator ${escapeHtml(seed.operator)}` : '',
+    seed.ref ? `ref ${escapeHtml(seed.ref)}` : '',
+    seed.directionCardinal ? `facing ${escapeHtml(seed.directionCardinal)}` : '',
+    seed.mountType ? escapeHtml(seed.mountType) : '',
+  ].filter(Boolean);
+  return (
+    `<strong>${escapeHtml(cameraSeedLabel(seed))}</strong><br>` +
+    `${details.join('<br>') || 'public seed point'}<br>` +
+    `${distanceMeters != null ? `${formatMeters(distanceMeters)} from current GPS<br>` : ''}` +
+    `${seed.osmTimestamp ? `updated ${escapeHtml(seed.osmTimestamp.slice(0, 10))}<br>` : ''}` +
+    `source ${escapeHtml(seed.source ?? 'camera-seeds')}`
   );
 }
 
@@ -2226,6 +2646,69 @@ function formatAgo(iso: string) {
 }
 
 async function exportGeoJson() {
+  const geojson = buildFieldReportGeoJson();
+  const targets = buildSmartTargets(spots).filter((target) => target.sightings >= TARGET_MIN_SIGHTINGS);
+  const sightingCount = spots.filter(hasCoordinates).length;
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const path = `roadlens/roadlens-scout-map-${stamp}.geojson`;
+  const result = await Filesystem.writeFile({
+    path,
+    data: JSON.stringify(geojson, null, 2),
+    directory: Directory.Documents,
+    encoding: Encoding.UTF8,
+    recursive: true,
+  });
+
+  await Share.share({
+    title: `${APP_NAME} export`,
+    text: `${targets.length} likely points, ${sightingCount} raw sightings, ${fieldObservations.length} field checks`,
+    url: result.uri,
+    dialogTitle: `Export ${APP_NAME} map`,
+  });
+}
+
+async function shareFieldReport() {
+  const geojson = buildFieldReportGeoJson();
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const path = `roadlens/roadlens-field-report-${stamp}.geojson`;
+  const result = await Filesystem.writeFile({
+    path,
+    data: JSON.stringify(geojson, null, 2),
+    directory: Directory.Documents,
+    encoding: Encoding.UTF8,
+    recursive: true,
+  });
+
+  const targets = buildSmartTargets(spots).filter((target) => target.sightings >= TARGET_MIN_SIGHTINGS);
+  const referencedSeeds = referencedCameraSeeds();
+  const reportText =
+    `${APP_NAME} field report\n\n` +
+    `- App version: ${APP_VERSION}\n` +
+    `- Camera seed version: ${activeCameraSeeds.version}\n` +
+    `- Local sightings: ${spots.length}\n` +
+    `- Smart targets: ${targets.length}\n` +
+    `- Field checks near seeds: ${fieldObservations.length}\n` +
+    `- Referenced public seeds: ${referencedSeeds.length}\n\n` +
+    `Attach the exported GeoJSON report from the phone share sheet if GitHub does not attach it automatically.`;
+
+  await Share.share({
+    title: `${APP_NAME} field report`,
+    text: reportText,
+    url: result.uri,
+    dialogTitle: `Share ${APP_NAME} report`,
+  });
+
+  const openIssue = confirm('Open a GitHub issue draft for this field report? Attach the exported GeoJSON there.');
+  if (openIssue) {
+    const title = `${APP_NAME} field report ${new Date().toISOString().slice(0, 10)}`;
+    const issueUrl =
+      `https://github.com/${UPDATE_REPO}/issues/new?` +
+      `title=${encodeURIComponent(title)}&body=${encodeURIComponent(reportText)}`;
+    window.open(issueUrl, '_blank', 'noopener');
+  }
+}
+
+function buildFieldReportGeoJson() {
   const targets = buildSmartTargets(spots).filter((target) => target.sightings >= TARGET_MIN_SIGHTINGS);
   const sightingFeatures = spots.filter(hasCoordinates).map((spot) => ({
     type: 'Feature',
@@ -2247,6 +2730,9 @@ async function exportGeoJson() {
       channel: spot.channel,
       confidence: spot.confidence,
       wildcardProbe: spot.wildcardProbe,
+      seedId: spot.seedId,
+      seedLabel: spot.seedLabel,
+      seedDistanceMeters: spot.seedDistanceMeters,
     },
   }));
   const targetFeatures = targets.map((target) => ({
@@ -2272,40 +2758,96 @@ async function exportGeoJson() {
       spotIds: target.spotIds,
     },
   }));
+  const observationFeatures = fieldObservations.map((observation) => ({
+    type: 'Feature',
+    geometry: {
+      type: 'Point',
+      coordinates: [observation.lon, observation.lat],
+    },
+    properties: {
+      kind: 'field-observation',
+      id: observation.id,
+      createdAt: observation.createdAt,
+      source: observation.source,
+      seedId: observation.seedId,
+      seedLabel: observation.seedLabel,
+      accuracy: observation.accuracy,
+      seedDistanceMeters: observation.distanceMeters,
+      sensorConnected: observation.sensorConnected,
+      firmwareVersion: observation.firmwareVersion,
+      signalCount: observation.signalCount,
+    },
+  }));
+  const seedFeatures = referencedCameraSeeds().map((seed) => ({
+    type: 'Feature',
+    geometry: {
+      type: 'Point',
+      coordinates: [seed.lon, seed.lat],
+    },
+    properties: {
+      kind: 'public-camera-seed',
+      id: seed.id,
+      label: cameraSeedLabel(seed),
+      brand: seed.brand,
+      operator: seed.operator,
+      source: seed.source,
+      ref: seed.ref,
+      direction: seed.direction,
+      directionCardinal: seed.directionCardinal,
+      surveillanceZone: seed.surveillanceZone,
+      mountType: seed.mountType,
+      osmTimestamp: seed.osmTimestamp,
+      osmVersion: seed.osmVersion,
+    },
+  }));
   const geojson = {
     type: 'FeatureCollection',
-    name: `${APP_NAME} map`,
-    features: [...targetFeatures, ...sightingFeatures],
+    name: `${APP_NAME} field report`,
+    properties: {
+      appName: APP_NAME,
+      appVersion: APP_VERSION,
+      generatedAt: new Date().toISOString(),
+      cameraSeedVersion: activeCameraSeeds.version,
+      cameraSeedPointCount: activeCameraSeeds.points.length,
+      cameraSeedSources: activeCameraSeeds.sources,
+    },
+    features: [...targetFeatures, ...sightingFeatures, ...observationFeatures, ...seedFeatures],
   };
+  return geojson;
+}
 
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const path = `roadlens/roadlens-scout-map-${stamp}.geojson`;
-  const result = await Filesystem.writeFile({
-    path,
-    data: JSON.stringify(geojson, null, 2),
-    directory: Directory.Documents,
-    encoding: Encoding.UTF8,
-    recursive: true,
-  });
-
-  await Share.share({
-    title: `${APP_NAME} export`,
-    text: `${targets.length} likely points, ${sightingFeatures.length} raw sightings`,
-    url: result.uri,
-    dialogTitle: `Export ${APP_NAME} map`,
-  });
+function referencedCameraSeeds() {
+  const ids = new Set<string>();
+  for (const spot of spots) {
+    if (spot.seedId) {
+      ids.add(spot.seedId);
+    }
+  }
+  for (const observation of fieldObservations) {
+    ids.add(observation.seedId);
+  }
+  if (nearestCameraSeed) {
+    ids.add(nearestCameraSeed.seed.id);
+  }
+  if (!ids.size) {
+    return [];
+  }
+  return activeCameraSeeds.points.filter((seed) => ids.has(seed.id));
 }
 
 async function clearSpots() {
-  if (spots.length === 0) {
+  if (spots.length === 0 && fieldObservations.length === 0) {
     return;
   }
-  const ok = confirm(`Clear ${spots.length} saved signals?`);
+  const ok = confirm(`Clear ${spots.length} saved signals and ${fieldObservations.length} field checks?`);
   if (!ok) {
     return;
   }
   spots = [];
+  fieldObservations = [];
+  seedObservationTimes = new Map();
   await persistSpots();
+  await persistFieldObservations();
   mapFocusText.textContent = 'Map cleared';
   render();
 }
@@ -2323,6 +2865,42 @@ function readStoredSpots(): Spot[] {
   }
 }
 
+function readStoredFieldObservations(): FieldObservation[] {
+  try {
+    const raw = localStorage.getItem(FIELD_OBSERVATION_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as FieldObservation[];
+    return Array.isArray(parsed) ? parsed.filter(isFieldObservation) : [];
+  } catch {
+    return [];
+  }
+}
+
+function isFieldObservation(value: FieldObservation | null | undefined): value is FieldObservation {
+  return Boolean(
+    value &&
+      typeof value.id === 'string' &&
+      typeof value.seedId === 'string' &&
+      typeof value.lat === 'number' &&
+      typeof value.lon === 'number' &&
+      value.source === 'seed-proximity',
+  );
+}
+
+function buildSeedObservationTimes(observations: FieldObservation[]) {
+  const map = new Map<string, number>();
+  for (const observation of observations) {
+    const timestamp = new Date(observation.createdAt).getTime();
+    if (!Number.isFinite(timestamp)) {
+      continue;
+    }
+    map.set(observation.seedId, Math.max(map.get(observation.seedId) ?? 0, timestamp));
+  }
+  return map;
+}
+
 async function persistSpots() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(spots));
   try {
@@ -2335,6 +2913,21 @@ async function persistSpots() {
     });
   } catch {
     // localStorage remains the primary fast path for the live UI.
+  }
+}
+
+async function persistFieldObservations() {
+  localStorage.setItem(FIELD_OBSERVATION_STORAGE_KEY, JSON.stringify(fieldObservations));
+  try {
+    await Filesystem.writeFile({
+      path: 'roadlens/field-observations.json',
+      data: JSON.stringify(fieldObservations, null, 2),
+      directory: Directory.Data,
+      encoding: Encoding.UTF8,
+      recursive: true,
+    });
+  } catch {
+    // Observations are also kept in localStorage for fast startup.
   }
 }
 

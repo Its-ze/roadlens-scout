@@ -327,6 +327,11 @@ h1 {
   box-shadow: 0 0 0 4px rgba(32, 201, 151, 0.16);
 }
 
+.legend-dot.seed {
+  background: #9ba8ff;
+  box-shadow: 0 0 0 4px rgba(155, 168, 255, 0.14);
+}
+
 .legend-dot.you {
   background: var(--sky);
 }
@@ -346,6 +351,18 @@ h1 {
   gap: 12px;
   padding: 16px;
   border-bottom: 1px solid rgba(65, 85, 97, 0.56);
+}
+
+.feed-tools {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.feed-tools .ghost {
+  min-width: 78px;
+  padding: 0 10px;
 }
 
 .feed-head h2 {
@@ -812,11 +829,76 @@ h1 {
   }
 
   .feed-head {
-    padding: 12px;
+    padding: 10px 12px;
   }
 
-  .feed-head .ghost {
-    min-width: 88px;
+  .feed-tools {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .feed-tools .ghost {
+    min-width: 0;
+    min-height: 36px;
+    padding: 0 8px;
+    font-size: 12px;
+    gap: 6px;
+  }
+
+  .shell[data-mobile-tab="setup"] .setup-panel {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .shell[data-mobile-tab="setup"] .section-title h3 {
+    font-size: 12px;
+  }
+
+  .shell[data-mobile-tab="setup"] .setup-card,
+  .shell[data-mobile-tab="setup"] .module-card {
+    gap: 8px;
+  }
+
+  .shell[data-mobile-tab="setup"] .setup-device {
+    min-height: 54px;
+    padding: 9px 10px;
+  }
+
+  .shell[data-mobile-tab="setup"] .setup-actions {
+    gap: 6px;
+  }
+
+  .shell[data-mobile-tab="setup"] .setup-actions button {
+    min-height: 40px;
+    padding: 0 7px;
+    font-size: 12px;
+    gap: 6px;
+  }
+
+  .shell[data-mobile-tab="setup"] .module-card {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 9px;
+  }
+
+  .shell[data-mobile-tab="setup"] .wifi-readout {
+    min-height: 42px;
+    padding: 7px 8px;
+  }
+
+  .shell[data-mobile-tab="setup"] .module-fields,
+  .shell[data-mobile-tab="setup"] .module-actions {
+    grid-column: 1 / -1;
+  }
+
+  .shell[data-mobile-tab="setup"] .module-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .shell[data-mobile-tab="setup"] .module-fields input {
+    height: 34px;
+    font-size: 13px;
   }
 
   .map-wrap .leaflet-bottom {
@@ -977,8 +1059,10 @@ h1 {
     flex-direction: column;
   }
 
-  .feed-head .ghost {
+  .feed-tools .ghost {
     width: 100%;
+    min-width: 0;
+    padding: 0 8px;
   }
 
   .target-item {

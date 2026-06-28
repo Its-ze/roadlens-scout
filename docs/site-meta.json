@@ -1,48 +1,56 @@
 {
     "name":  "RoadLens Scout",
-    "version":  "0.1.11",
-    "generatedAt":  "2026-06-25T11:22:53Z",
+    "version":  "0.1.12",
+    "generatedAt":  "2026-06-28T03:22:03Z",
     "apk":  {
-                "path":  "https://github.com/Its-ze/roadlens-scout/releases/download/v0.1.11/roadlens-scout-v0.1.11-debug.apk",
-                "asset":  "roadlens-scout-v0.1.11-debug.apk",
-                "bytes":  7768016,
-                "sha256":  "3dea7041b56b855ccdfd82520486277640a48c89d88ea7e0419abefe165c7e42"
+                "path":  "https://github.com/Its-ze/roadlens-scout/releases/download/v0.1.12/roadlens-scout-v0.1.12-debug.apk",
+                "asset":  "roadlens-scout-v0.1.12-debug.apk",
+                "bytes":  13183937,
+                "sha256":  "7a26b946cf922b4ef2064a056ffb86d60e1cb80af5bd684f7ed4750d131e22d6"
             },
     "firmware":  {
                      "manifest":  "flasher/manifest.json",
                      "path":  "flasher/firmware/esp32/firmware.bin",
                      "bytes":  1192064,
-                     "sha256":  "1c677de71fffda922e86a312f49c75b95a9cbd6dc6b2f19a03f8ef85261b1ec1",
+                     "sha256":  "a0dfe24d04bbfc27d653813d09c925e37cbc64cce3de755e2dde5673df56ab9a",
                      "builds":  [
                                     {
                                         "chipFamily":  "ESP32",
                                         "path":  "flasher/firmware/esp32/firmware.bin",
                                         "bytes":  1192064,
-                                        "sha256":  "1c677de71fffda922e86a312f49c75b95a9cbd6dc6b2f19a03f8ef85261b1ec1"
+                                        "sha256":  "a0dfe24d04bbfc27d653813d09c925e37cbc64cce3de755e2dde5673df56ab9a"
                                     },
                                     {
                                         "chipFamily":  "ESP32-S3",
                                         "path":  "flasher/firmware/esp32s3/firmware.bin",
                                         "bytes":  1070240,
-                                        "sha256":  "df6c1f0319cd530ac769181cab43d8a97792c85b746ee69a5033f0b423329203"
+                                        "sha256":  "7ecf0d4fafde14f5daf442dbbd86c3f3b31cf833944e9a126fbecc3eac185920"
                                     },
                                     {
                                         "chipFamily":  "ESP32-C3",
                                         "path":  "flasher/firmware/esp32c3/firmware.bin",
                                         "bytes":  1154096,
-                                        "sha256":  "5053456c12e52e89e358cd0947305705cdec4424c8e25bcd765ad85ad4916d45"
+                                        "sha256":  "17ead9cbfa635b86b76a63fd5754a590a1f6f07582aff12cb056b32ea7eb06e1"
                                     }
                                 ]
                  },
     "signatures":  {
                        "path":  "signatures.json",
-                       "version":  "2026.06.24.209126de",
-                       "bytes":  16540,
-                       "sha256":  "4aef8033e7e084a45c960ba58d3312e97d69e9c368df772f6bd5e0732a8a964c",
+                       "version":  "2026.06.27.209126de",
+                       "bytes":  8716,
+                       "sha256":  "4d62c757750bff2190a28e8b71fe77b6047b00a7997b891aebf0d781b524564c",
                        "wifiPrefixes":  42,
                        "blePrefixes":  42,
                        "bleNamePatterns":  4,
                        "bleManufacturerIds":  1,
                        "ravenServiceUuids":  8
-                   }
+                   },
+    "cameraSeeds":  {
+                        "path":  "camera-seeds.json",
+                        "version":  "2026.06.28.5cf03fcf",
+                        "bytes":  19426433,
+                        "sha256":  "5344964d2c80f43fd71f22b1672db72c2015abf01232fa42dfd8c17caff52ab2",
+                        "points":  89942,
+                        "sources":  1
+                    }
 }

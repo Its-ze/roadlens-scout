@@ -1,0 +1,38 @@
+name: Update camera seed map
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "38 11 * * 2"
+
+permissions:
+  contents: write
+
+jobs:
+  update-camera-seeds:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Refresh camera seed feed
+        shell: pwsh
+        run: .\scripts\update-camera-seeds.ps1
+
+      - name: Commit changed feed
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/camera-seeds.json app/public/camera-seeds.json docs/camera-seeds.json docs/site-meta.json docs/downloads/checksums.txt
+          if (git diff --cached --quiet) {
+            "No camera seed changes."
+            exit 0
+          }
+          git commit -m "Update RoadLens camera seed map"
+          git push

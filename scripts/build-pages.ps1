@@ -22,10 +22,11 @@ $DocsDownloads = Join-Path $DocsDir "downloads"
 $DocsAssets = Join-Path $DocsDir "assets"
 $BrandMark = Join-Path $Root "assets\brand\roadlens-mark.svg"
 $SignatureSource = Join-Path $Root "data\signatures.json"
+$CameraSeedSource = Join-Path $Root "data\camera-seeds.json"
 $ApkName = "roadlens-scout-v$Version-debug.apk"
 $ApkReleaseUrl = "https://github.com/Its-ze/roadlens-scout/releases/download/v$Version/$ApkName"
 
-foreach ($required in @($FlasherSource, (Join-Path $FlasherSource "manifest.json"), (Join-Path $FlasherSource "firmware"), $ApkPath, $BrandMark, $SignatureSource)) {
+foreach ($required in @($FlasherSource, (Join-Path $FlasherSource "manifest.json"), (Join-Path $FlasherSource "firmware"), $ApkPath, $BrandMark, $SignatureSource, $CameraSeedSource)) {
   if (-not (Test-Path -LiteralPath $required)) {
     throw "Missing required Pages artifact: $required"
   }
@@ -38,6 +39,7 @@ Copy-Item -Path (Join-Path $FlasherSource "*") -Destination $DocsFlasher -Recurs
 Remove-Item -LiteralPath (Join-Path $DocsFlasher ".server.pid") -Force -ErrorAction SilentlyContinue
 Copy-Item -LiteralPath $BrandMark -Destination (Join-Path $DocsAssets "roadlens-mark.svg") -Force
 Copy-Item -LiteralPath $SignatureSource -Destination (Join-Path $DocsDir "signatures.json") -Force
+Copy-Item -LiteralPath $CameraSeedSource -Destination (Join-Path $DocsDir "camera-seeds.json") -Force
 
 $apkHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ApkPath).Hash.ToLowerInvariant()
 $apkItem = Get-Item -LiteralPath $ApkPath
@@ -45,6 +47,10 @@ $signaturePath = Join-Path $DocsDir "signatures.json"
 $signatureItem = Get-Item -LiteralPath $signaturePath
 $signatureHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $signaturePath).Hash.ToLowerInvariant()
 $signatureFeed = Get-Content -LiteralPath $signaturePath -Raw | ConvertFrom-Json
+$cameraSeedPath = Join-Path $DocsDir "camera-seeds.json"
+$cameraSeedItem = Get-Item -LiteralPath $cameraSeedPath
+$cameraSeedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $cameraSeedPath).Hash.ToLowerInvariant()
+$cameraSeedFeed = Get-Content -LiteralPath $cameraSeedPath -Raw | ConvertFrom-Json
 $manifestPath = Join-Path $DocsFlasher "manifest.json"
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
 $firmwareFiles = Get-ChildItem -LiteralPath (Join-Path $DocsFlasher "firmware") -Filter "*.bin" -Recurse |
@@ -80,6 +86,7 @@ if (-not $primaryFirmware) {
 
 $checksumLines = @("$apkHash  $ApkReleaseUrl")
 $checksumLines += "$signatureHash  signatures.json"
+$checksumLines += "$cameraSeedHash  camera-seeds.json"
 foreach ($file in $firmwareFiles) {
   $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLowerInvariant()
   $relative = $file.FullName.Substring($DocsDir.Length + 1).Replace('\', '/')
@@ -115,6 +122,14 @@ $meta = [ordered]@{
     bleNamePatterns = @($signatureFeed.bleNamePatterns).Count
     bleManufacturerIds = @($signatureFeed.bleManufacturerIds).Count
     ravenServiceUuids = @($signatureFeed.ravenServiceUuids).Count
+  }
+  cameraSeeds = [ordered]@{
+    path = "camera-seeds.json"
+    version = [string]$cameraSeedFeed.version
+    bytes = $cameraSeedItem.Length
+    sha256 = $cameraSeedHash
+    points = [int]$cameraSeedFeed.pointCount
+    sources = @($cameraSeedFeed.sources).Count
   }
 }
 
