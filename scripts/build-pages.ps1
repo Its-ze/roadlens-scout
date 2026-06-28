@@ -122,6 +122,7 @@ $meta = [ordered]@{
     bleNamePatterns = @($signatureFeed.bleNamePatterns).Count
     bleManufacturerIds = @($signatureFeed.bleManufacturerIds).Count
     ravenServiceUuids = @($signatureFeed.ravenServiceUuids).Count
+    wifiSsidPatterns = @($signatureFeed.wifiSsidPatterns).Count
   }
   cameraSeeds = [ordered]@{
     path = "camera-seeds.json"

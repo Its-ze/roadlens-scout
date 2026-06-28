@@ -25,6 +25,11 @@ $Sources = @(
     name = "OUI-Spy Unified Blue Flock-You source"
     url = "https://raw.githubusercontent.com/colonelpanichacks/oui-spy-unified-blue/HEAD/src/raw/flockyou.cpp"
     kind = "ble-source"
+  },
+  [ordered]@{
+    name = "WiFiMothership Flock detector confidence notes"
+    url = "https://wifimothership.com/flock"
+    kind = "detector-confidence"
   }
 )
 
@@ -41,6 +46,12 @@ $BaselinePrefixes = @(
 )
 
 $BaselineNames = @("FS Ext Battery", "Penguin", "Flock", "Pigvision")
+$BaselineWifiSsidPatterns = @(
+  [ordered]@{ pattern = "^Flock-[A-Z0-9]+$"; label = "flock-wifi-ssid"; confidence = 88; match = "regex" },
+  [ordered]@{ pattern = "FS Ext Battery"; label = "flock-wifi-battery-ssid"; confidence = 86; match = "contains" },
+  [ordered]@{ pattern = "Penguin"; label = "flock-wifi-penguin-ssid"; confidence = 84; match = "contains" },
+  [ordered]@{ pattern = "Pigvision"; label = "flock-wifi-pigvision-ssid"; confidence = 84; match = "contains" }
+)
 $BaselineManufacturerIds = @(0x09C8)
 $BaselineRavenServiceUuids = @(
   "0000180a-0000-1000-8000-00805f9b34fb",
@@ -133,6 +144,7 @@ foreach ($source in $Sources) {
     names = 0
     manufacturerIds = 0
     ravenServiceUuids = 0
+    wifiSsidPatterns = 0
   }
 
   try {
@@ -167,6 +179,13 @@ foreach ($source in $Sources) {
       $result.manufacturerIds = 1
     }
 
+    foreach ($pattern in $BaselineWifiSsidPatterns) {
+      if ($content.IndexOf([string]$pattern.pattern, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+          $content.IndexOf([string]$pattern.label, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        $result.wifiSsidPatterns++
+      }
+    }
+
     $matchedRaven = New-Object "System.Collections.Generic.HashSet[string]"
     foreach ($match in $uuidRegex.Matches($content)) {
       [void]$matchedRaven.Add($match.Value.ToLowerInvariant())
@@ -197,7 +216,10 @@ foreach ($prefix in $Prefixes) {
   }
 }
 
-$hashInput = (($Prefixes -join ",") + "|" + ($Names -join ",") + "|" + ($ManufacturerIds -join ",") + "|" + ($RavenServiceUuids -join ","))
+$ssidHashInput = ($BaselineWifiSsidPatterns | ForEach-Object {
+  "{0}:{1}:{2}:{3}" -f $_.pattern, $_.label, $_.confidence, $_.match
+}) -join ","
+$hashInput = (($Prefixes -join ",") + "|" + ($Names -join ",") + "|" + ($ManufacturerIds -join ",") + "|" + ($RavenServiceUuids -join ",") + "|" + $ssidHashInput)
 $sha = [System.Security.Cryptography.SHA256]::Create()
 try {
   $hashBytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($hashInput))
@@ -218,6 +240,7 @@ $feed = [ordered]@{
   bleNamePatterns = @($Names)
   bleManufacturerIds = @($ManufacturerIds)
   ravenServiceUuids = @($RavenServiceUuids)
+  wifiSsidPatterns = @($BaselineWifiSsidPatterns)
   removedPrefixes = @($RemovedPrefixes | Sort-Object)
 }
 
@@ -239,3 +262,4 @@ New-Item -ItemType Directory -Force -Path $appPublic | Out-Null
 "  BLE names: $($Names.Count)"
 "  BLE manufacturer IDs: $($ManufacturerIds.Count)"
 "  Raven service UUIDs: $($RavenServiceUuids.Count)"
+"  Wi-Fi SSID patterns: $($BaselineWifiSsidPatterns.Count)"

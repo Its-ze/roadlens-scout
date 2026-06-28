@@ -2,20 +2,21 @@
 
 The ESP32 advertises as `RoadLensESP32`.
 
-Firmware `0.1.12` starts in BLE-first mode: it advertises `RoadLensESP32`
+Firmware `0.1.13` starts in BLE-first mode: it advertises `RoadLensESP32`
 without running Wi-Fi promiscuous scanning, then starts passive Wi-Fi detection
 only after the phone has connected, subscribed to notifications, and sent
 `start-scan`. If Android times out the first command write, the firmware
 auto-starts scanning after a short connect delay. On disconnect, Wi-Fi monitor
 mode is stopped and BLE advertising restarts.
 
-Firmware `0.1.12` scans 2.4 GHz channels 1-11, uses the public Flock-style
-Wi-Fi signature set, and reports raw scan counters so the app can distinguish
-"no match" from "not seeing frames." It also accepts an app-synced signature
-feed and stores it in ESP32 preferences, falling back to the built-in set when
-no synced feed exists.
+Firmware `0.1.13` scans 2.4 GHz channels 1-11, uses the public Flock-style
+Wi-Fi signature set, detects empty probe requests, and parses Wi-Fi management
+SSIDs for Flock-style provisioning/battery/module names. It reports raw scan
+counters so the app can distinguish "no match" from "not seeing frames." It
+also accepts an app-synced signature feed and stores it in ESP32 preferences,
+falling back to the built-in set when no synced feed exists.
 
-Firmware `0.1.12` also supports BLE-orchestrated OTA updates. The app sends Wi-Fi
+Firmware `0.1.13` also supports BLE-orchestrated OTA updates. The app sends Wi-Fi
 credentials and the expected firmware size/SHA256 in compact staged commands.
 The ESP32 downloads its chip-specific firmware from RoadLens Pages, verifies the
 SHA256 before finalizing the update, and reboots after success.
@@ -38,25 +39,25 @@ The notify characteristic emits newline-delimited JSON. The same JSON is printed
 Detection example:
 
 ```json
-{"type":"detection","source":"wifi","detector":"RoadLensESP32","mac":"70:c9:4e:00:00:00","role":"addr2","label":"flock-wifi","rssi":-71,"channel":6,"frame_type":0,"frame_subtype":4,"wildcard_probe":true,"confidence":96,"uptime_ms":123456}
+{"type":"detection","source":"wifi","detector":"RoadLensESP32","mac":"70:c9:4e:00:00:00","ssid":"Flock-ABC123","role":"ssid","label":"flock-wifi-ssid","rssi":-71,"channel":6,"frame_type":0,"frame_subtype":4,"wildcard_probe":false,"confidence":88,"uptime_ms":123456}
 ```
 
 Status example:
 
 ```json
-{"type":"status","device":"RoadLensESP32","reason":"heartbeat","uptime_ms":123456,"channel":6,"detections":3,"signature_count":42,"ble_connected":true,"sniffer_active":true,"frames_seen":1800,"mgmt_frames":700,"data_frames":1100,"wildcard_probes":8,"candidate_frames":3,"queue_drops":0,"firmware_version":"0.1.12","chip_family":"ESP32","ota_supported":true,"ota_in_progress":false,"ota_version":"","signature_version":"2026.06.24.209126de","signature_source":"synced","signature_sync_supported":true}
+{"type":"status","device":"RoadLensESP32","reason":"heartbeat","uptime_ms":123456,"channel":6,"detections":3,"signature_count":46,"ble_connected":true,"sniffer_active":true,"frames_seen":1800,"mgmt_frames":700,"data_frames":1100,"wildcard_probes":8,"candidate_frames":3,"queue_drops":0,"firmware_version":"0.1.13","chip_family":"ESP32","ota_supported":true,"ota_in_progress":false,"ota_version":"","signature_version":"2026.06.28.003ddaa1","signature_source":"synced","signature_sync_supported":true}
 ```
 
 OTA status example:
 
 ```json
-{"type":"ota","state":"download","detail":"Downloading firmware","progress":50,"version":"0.1.12","chip_family":"ESP32"}
+{"type":"ota","state":"download","detail":"Downloading firmware","progress":50,"version":"0.1.13","chip_family":"ESP32"}
 ```
 
 Signature status example:
 
 ```json
-{"type":"signatures","state":"active","detail":"Signature set updated","count":42,"version":"2026.06.24.209126de"}
+{"type":"signatures","state":"active","detail":"Signature set updated","count":46,"version":"2026.06.28.003ddaa1"}
 ```
 
 Commands:

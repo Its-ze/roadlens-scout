@@ -429,7 +429,7 @@
               </div>
               <div>
                 <strong>Wider Wi-Fi sweep</strong>
-                <span>Firmware scans channels 1-11, reports counters, and can use app-synced signature feeds.</span>
+                <span>Firmware scans channels 1-11, reports counters, detects SSID/probe signals, and can use app-synced signature feeds.</span>
               </div>
               <div>
                 <strong>Phone USB setup</strong>
@@ -516,7 +516,7 @@
             : "ESP32";
           if (meta.signatures) {
             document.getElementById("signatureFeed").textContent =
-              `${meta.signatures.version} | ${meta.signatures.wifiPrefixes} Wi-Fi / ${meta.signatures.ravenServiceUuids || 0} Raven`;
+              `${meta.signatures.version} | ${meta.signatures.wifiPrefixes} Wi-Fi / ${meta.signatures.ravenServiceUuids || 0} Raven / ${meta.signatures.wifiSsidPatterns || 0} SSID`;
           } else {
             document.getElementById("signatureFeed").textContent = "metadata unavailable";
           }

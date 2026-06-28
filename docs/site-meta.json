@@ -1,49 +1,50 @@
 {
     "name":  "RoadLens Scout",
-    "version":  "0.1.12",
-    "generatedAt":  "2026-06-28T03:22:03Z",
+    "version":  "0.1.13",
+    "generatedAt":  "2026-06-28T05:15:13Z",
     "apk":  {
-                "path":  "https://github.com/Its-ze/roadlens-scout/releases/download/v0.1.12/roadlens-scout-v0.1.12-debug.apk",
-                "asset":  "roadlens-scout-v0.1.12-debug.apk",
-                "bytes":  13183937,
-                "sha256":  "7a26b946cf922b4ef2064a056ffb86d60e1cb80af5bd684f7ed4750d131e22d6"
+                "path":  "https://github.com/Its-ze/roadlens-scout/releases/download/v0.1.13/roadlens-scout-v0.1.13-debug.apk",
+                "asset":  "roadlens-scout-v0.1.13-debug.apk",
+                "bytes":  10482823,
+                "sha256":  "70eedc64ef5afe98e887b1ec6567d732ef2c62d4c7236cf65dc89f40f57a613b"
             },
     "firmware":  {
                      "manifest":  "flasher/manifest.json",
                      "path":  "flasher/firmware/esp32/firmware.bin",
-                     "bytes":  1192064,
-                     "sha256":  "a0dfe24d04bbfc27d653813d09c925e37cbc64cce3de755e2dde5673df56ab9a",
+                     "bytes":  1193216,
+                     "sha256":  "c15c7a1d1e7edb62ab930b65ec8e96e05e38899feefea6f090c68f930931b46e",
                      "builds":  [
                                     {
                                         "chipFamily":  "ESP32",
                                         "path":  "flasher/firmware/esp32/firmware.bin",
-                                        "bytes":  1192064,
-                                        "sha256":  "a0dfe24d04bbfc27d653813d09c925e37cbc64cce3de755e2dde5673df56ab9a"
+                                        "bytes":  1193216,
+                                        "sha256":  "c15c7a1d1e7edb62ab930b65ec8e96e05e38899feefea6f090c68f930931b46e"
                                     },
                                     {
                                         "chipFamily":  "ESP32-S3",
                                         "path":  "flasher/firmware/esp32s3/firmware.bin",
-                                        "bytes":  1070240,
-                                        "sha256":  "7ecf0d4fafde14f5daf442dbbd86c3f3b31cf833944e9a126fbecc3eac185920"
+                                        "bytes":  1071504,
+                                        "sha256":  "f97211efb24a6bbde934c5aff4332998ecb03ace4753171fd16c8fbaed564d5d"
                                     },
                                     {
                                         "chipFamily":  "ESP32-C3",
                                         "path":  "flasher/firmware/esp32c3/firmware.bin",
-                                        "bytes":  1154096,
-                                        "sha256":  "17ead9cbfa635b86b76a63fd5754a590a1f6f07582aff12cb056b32ea7eb06e1"
+                                        "bytes":  1155376,
+                                        "sha256":  "7e35d1b1e4ed1676498d7bcd383eae1761679b0103efd8bcc7e3b398d893160c"
                                     }
                                 ]
                  },
     "signatures":  {
                        "path":  "signatures.json",
-                       "version":  "2026.06.27.209126de",
-                       "bytes":  8716,
-                       "sha256":  "4d62c757750bff2190a28e8b71fe77b6047b00a7997b891aebf0d781b524564c",
-                       "wifiPrefixes":  42,
-                       "blePrefixes":  42,
+                       "version":  "2026.06.28.003ddaa1",
+                       "bytes":  19819,
+                       "sha256":  "da3884abc09c90b6517cd38bf4717b95ed04061204bd1ed4186df413be6e9d71",
+                       "wifiPrefixes":  46,
+                       "blePrefixes":  46,
                        "bleNamePatterns":  4,
                        "bleManufacturerIds":  1,
-                       "ravenServiceUuids":  8
+                       "ravenServiceUuids":  8,
+                       "wifiSsidPatterns":  4
                    },
     "cameraSeeds":  {
                         "path":  "camera-seeds.json",

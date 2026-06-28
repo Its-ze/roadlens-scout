@@ -13,6 +13,7 @@ export type Spot = {
   detector: string;
   label: string;
   mac: string;
+  ssid?: string;
   role: string;
   rssi: number | null;
   channel: number | null;

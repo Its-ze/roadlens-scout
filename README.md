@@ -59,14 +59,16 @@ USB upload:
 Replace `COM15` with the live ESP32 port.
 
 After flashing, reset or power-cycle the board and look for the BLE device name
-`RoadLensESP32` from the Android app. Firmware `0.1.12` keeps Wi-Fi monitor mode
+`RoadLensESP32` from the Android app. Firmware `0.1.13` keeps Wi-Fi monitor mode
 off until the phone has connected and subscribed to notifications, then the app
 sends `start-scan` to begin passive detection. If Android times out that first
 BLE command write, the sensor auto-starts scanning after a short connect delay.
 It scans 2.4 GHz channels 1-11,
-reports raw frame counters in app status, and matches the current public
-Flock-style Wi-Fi signature feed. The app can sync newer signature feeds into
-v0.1.8+ sensors over BLE, and the ESP32 stores the synced feed locally.
+reports raw frame counters in app status, matches the current public
+Flock-style Wi-Fi signature feed, detects empty probe requests, and tags
+Flock-style SSIDs such as `Flock-*` and battery/module names when they appear in
+management frames. The app can sync newer signature feeds into v0.1.8+ sensors
+over BLE, and the ESP32 stores the synced feed locally.
 
 For a specific USB-upload target:
 
@@ -112,6 +114,10 @@ known Flock-style BLE names, manufacturer IDs, MAC prefixes, and Raven service
 UUIDs from the active signature feed, then saves any matches to the same
 GPS-tagged map as ESP32 Wi-Fi hits.
 
+The map has a locate control that learns local map behavior. Repeated use stores
+the preferred zoom and enables a conservative follow mode; manual pan/zoom
+pauses follow mode so the map does not fight browsing.
+
 ### Public Camera Seed Map and Field Reports
 
 RoadLens also bundles and syncs a public camera seed map from OpenStreetMap-
@@ -128,7 +134,7 @@ operator can review and attach/share the report intentionally.
 
 ### Sensor OTA Updates
 
-Firmware `0.1.12` supports in-app ESP32 firmware updates after the board has been
+Firmware `0.1.13` supports in-app ESP32 firmware updates after the board has been
 flashed once by USB or the web flasher. When the app connects to a sensor, it
 reads the sensor firmware version and chip family, checks RoadLens Pages
 metadata, and prompts if a newer matching firmware build is available.
@@ -151,8 +157,8 @@ hard-coding it in firmware:
 ```
 
 That script pulls the public Flock-You/OUI-Spy research files, merges the Wi-Fi
-prefixes, BLE name patterns, manufacturer ID, and Raven service UUIDs, omits
-known false-positive prefixes, and writes:
+prefixes, BLE name patterns, manufacturer ID, Raven service UUIDs, and
+Wi-Fi SSID pattern detectors, omits known false-positive prefixes, and writes:
 
 - `data/signatures.json`
 - `app/public/signatures.json`

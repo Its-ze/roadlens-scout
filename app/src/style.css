@@ -225,10 +225,16 @@ h1 {
 }
 
 .map-title,
+.map-tools,
 .telemetry,
 .map-legend {
   position: absolute;
   z-index: 500;
+}
+
+.map-title,
+.telemetry,
+.map-legend {
   border: 1px solid rgba(65, 85, 97, 0.52);
   background: rgba(13, 18, 22, 0.82);
   backdrop-filter: blur(14px);
@@ -256,6 +262,30 @@ h1 {
   overflow-wrap: anywhere;
   font-size: 18px;
   line-height: 1.15;
+}
+
+.map-tools {
+  right: 16px;
+  bottom: 76px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.map-tool {
+  width: 46px;
+  height: 46px;
+  min-height: 46px;
+  padding: 0;
+  border-color: rgba(65, 85, 97, 0.62);
+  background: rgba(13, 18, 22, 0.86);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
+}
+
+.map-tool svg {
+  width: 21px;
+  height: 21px;
 }
 
 .telemetry {
@@ -776,6 +806,7 @@ h1 {
   }
 
   .shell:not([data-mobile-tab="map"]) .map-title,
+  .shell:not([data-mobile-tab="map"]) .map-tools,
   .shell:not([data-mobile-tab="map"]) .telemetry,
   .shell:not([data-mobile-tab="map"]) .map-wrap .leaflet-control-container {
     display: none;
@@ -903,6 +934,17 @@ h1 {
 
   .map-wrap .leaflet-bottom {
     bottom: calc(var(--mobile-tabs-height) + 18px + env(safe-area-inset-bottom));
+  }
+
+  .map-tools {
+    right: 14px;
+    bottom: calc(var(--mobile-tabs-height) + 150px + env(safe-area-inset-bottom));
+  }
+
+  .map-tool {
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
   }
 
   .map-legend {

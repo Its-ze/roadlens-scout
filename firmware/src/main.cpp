@@ -12,7 +12,7 @@
 #include "signatures.h"
 
 #ifndef ROADLENS_FIRMWARE_VERSION
-#define ROADLENS_FIRMWARE_VERSION "0.1.12"
+#define ROADLENS_FIRMWARE_VERSION "0.1.13"
 #endif
 
 #ifndef ROADLENS_CHIP_FAMILY
@@ -39,8 +39,9 @@ static const uint8_t CHANNELS[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 
 struct DetectionEvent {
   char mac[18];
-  char role[8];
-  char label[24];
+  char role[10];
+  char label[32];
+  char ssid[33];
   int8_t rssi;
   uint8_t channel;
   uint8_t frameType;
@@ -52,7 +53,7 @@ struct DetectionEvent {
 
 struct SeenEntry {
   uint8_t mac[6];
-  char role[8];
+  char role[10];
   uint32_t lastSeenMs;
   bool used;
 };
@@ -99,6 +100,131 @@ static void applyStagedSignatures();
 static void formatMac(const uint8_t *mac, char *out, size_t outLen) {
   snprintf(out, outLen, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1],
            mac[2], mac[3], mac[4], mac[5]);
+}
+
+static uint16_t taggedParameterOffset(uint8_t frameType, uint8_t frameSubtype) {
+  if (frameType != 0) {
+    return 0;
+  }
+
+  switch (frameSubtype) {
+    case 0:  // Association request.
+      return 28;
+    case 2:  // Reassociation request.
+      return 34;
+    case 4:  // Probe request.
+      return 24;
+    case 5:  // Probe response.
+    case 8:  // Beacon.
+      return 36;
+    default:
+      return 0;
+  }
+}
+
+static bool extractSsidFromFrame(const uint8_t *payload, uint16_t len,
+                                 uint8_t frameType, uint8_t frameSubtype,
+                                 char *out, size_t outLen) {
+  if (outLen == 0) {
+    return false;
+  }
+  out[0] = '\0';
+
+  uint16_t pos = taggedParameterOffset(frameType, frameSubtype);
+  if (pos == 0 || len < pos + 2) {
+    return false;
+  }
+
+  while (pos + 2 <= len) {
+    const uint8_t tag = payload[pos];
+    const uint8_t tagLen = payload[pos + 1];
+    if (pos + 2 + tagLen > len) {
+      return false;
+    }
+    if (tag == 0) {
+      const size_t copyLen = min(static_cast<size_t>(tagLen), outLen - 1);
+      for (size_t i = 0; i < copyLen; i++) {
+        const char c = static_cast<char>(payload[pos + 2 + i]);
+        out[i] = isprint(static_cast<unsigned char>(c)) ? c : '?';
+      }
+      out[copyLen] = '\0';
+      return true;
+    }
+    pos += 2 + tagLen;
+  }
+
+  return false;
+}
+
+static bool startsWithIgnoreCase(const char *value, const char *prefix) {
+  for (size_t i = 0; prefix[i] != '\0'; i++) {
+    if (value[i] == '\0' ||
+        tolower(static_cast<unsigned char>(value[i])) !=
+            tolower(static_cast<unsigned char>(prefix[i]))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool containsIgnoreCase(const char *value, const char *needle) {
+  const size_t needleLen = strlen(needle);
+  if (needleLen == 0) {
+    return true;
+  }
+  for (size_t i = 0; value[i] != '\0'; i++) {
+    size_t j = 0;
+    while (j < needleLen && value[i + j] != '\0' &&
+           tolower(static_cast<unsigned char>(value[i + j])) ==
+               tolower(static_cast<unsigned char>(needle[j]))) {
+      j++;
+    }
+    if (j == needleLen) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool matchesFlockSsid(const char *ssid, char *label, size_t labelLen,
+                             uint8_t *confidence) {
+  if (ssid == nullptr || ssid[0] == '\0') {
+    return false;
+  }
+
+  if (startsWithIgnoreCase(ssid, "Flock-")) {
+    bool validSuffix = false;
+    for (size_t i = 6; ssid[i] != '\0'; i++) {
+      if (!isalnum(static_cast<unsigned char>(ssid[i]))) {
+        validSuffix = false;
+        break;
+      }
+      validSuffix = true;
+    }
+    if (validSuffix) {
+      strlcpy(label, "flock-wifi-ssid", labelLen);
+      *confidence = 88;
+      return true;
+    }
+  }
+
+  if (containsIgnoreCase(ssid, "FS Ext Battery")) {
+    strlcpy(label, "flock-wifi-battery-ssid", labelLen);
+    *confidence = 86;
+    return true;
+  }
+  if (containsIgnoreCase(ssid, "Penguin")) {
+    strlcpy(label, "flock-wifi-penguin-ssid", labelLen);
+    *confidence = 84;
+    return true;
+  }
+  if (containsIgnoreCase(ssid, "Pigvision")) {
+    strlcpy(label, "flock-wifi-pigvision-ssid", labelLen);
+    *confidence = 84;
+    return true;
+  }
+
+  return false;
 }
 
 static bool wildcardSsidProbe(const uint8_t *payload, uint16_t len,
@@ -390,16 +516,22 @@ static bool shouldSuppress(const uint8_t *mac, const char *role,
 static void queueDetection(const uint8_t *mac, const char *role,
                            const OuiSignature *signature, int8_t rssi,
                            uint8_t channel, uint8_t frameType,
-                           uint8_t frameSubtype, bool wildcardProbe) {
+                           uint8_t frameSubtype, bool wildcardProbe,
+                           const char *ssid = "",
+                           const char *labelOverride = nullptr,
+                           uint8_t confidenceOverride = 0) {
   const uint32_t nowMs = millis();
-  if (!signature || shouldSuppress(mac, role, nowMs) || detectionQueue == nullptr) {
+  if ((!signature && labelOverride == nullptr) || shouldSuppress(mac, role, nowMs) ||
+      detectionQueue == nullptr) {
     return;
   }
 
   DetectionEvent event = {};
   formatMac(mac, event.mac, sizeof(event.mac));
   strlcpy(event.role, role, sizeof(event.role));
-  strlcpy(event.label, signature->label, sizeof(event.label));
+  strlcpy(event.label, labelOverride != nullptr ? labelOverride : signature->label,
+          sizeof(event.label));
+  strlcpy(event.ssid, ssid != nullptr ? ssid : "", sizeof(event.ssid));
   event.rssi = rssi;
   event.channel = channel;
   event.frameType = frameType;
@@ -407,8 +539,13 @@ static void queueDetection(const uint8_t *mac, const char *role,
   event.wildcardProbe = wildcardProbe;
   event.uptimeMs = nowMs;
 
-  if (wildcardProbe && strcmp(role, "addr2") == 0) {
+  if (confidenceOverride > 0) {
+    event.confidence = confidenceOverride;
+  } else if (wildcardProbe && strcmp(role, "addr2") == 0) {
     event.confidence = 96;
+  } else if (mac[0] == 0xb4 && mac[1] == 0x1e && mac[2] == 0x52 &&
+             strcmp(role, "addr2") == 0) {
+    event.confidence = 90;
   } else if (strcmp(role, "addr2") == 0) {
     event.confidence = 82;
   } else if (strcmp(role, "addr1") == 0) {
@@ -455,6 +592,15 @@ static void snifferCallback(void *buf, wifi_promiscuous_pkt_type_t type) {
     wildcardProbesSeen++;
   }
 
+  char ssid[33] = "";
+  char ssidLabel[32] = "";
+  uint8_t ssidConfidence = 0;
+  const bool hasSsid =
+      extractSsidFromFrame(payload, len, frameType, frameSubtype, ssid, sizeof(ssid));
+  const bool flockSsid =
+      hasSsid && matchesFlockSsid(ssid, ssidLabel, sizeof(ssidLabel),
+                                  &ssidConfidence);
+
   const uint8_t *addr1 = payload + 4;
   const uint8_t *addr2 = payload + 10;
   const uint8_t *addr3 = payload + 16;
@@ -468,8 +614,15 @@ static void snifferCallback(void *buf, wifi_promiscuous_pkt_type_t type) {
       candidateFramesSeen++;
     }
     queueDetection(addr, role, signature, rssi, channel, frameType,
-                   frameSubtype, wildcardForRole);
+                   frameSubtype, wildcardForRole, ssid);
   };
+
+  if (flockSsid) {
+    candidateFramesSeen++;
+    queueDetection(addr2, "ssid", nullptr, rssi, channel, frameType,
+                   frameSubtype, wildcardProbe, ssid, ssidLabel,
+                   ssidConfidence);
+  }
 
   inspectAddress(addr2, "addr2", wildcardProbe);
   inspectAddress(addr1, "addr1", false);
@@ -550,14 +703,17 @@ static void emitDetection(const DetectionEvent &event) {
   detectionCount++;
   digitalWrite(LED_PIN, HIGH);
 
-  char json[320];
+  const String escapedLabel = jsonEscape(String(event.label));
+  const String escapedSsid = jsonEscape(String(event.ssid));
+  char json[520];
   snprintf(json, sizeof(json),
            "{\"type\":\"detection\",\"source\":\"wifi\",\"detector\":\"%s\","
-           "\"mac\":\"%s\",\"role\":\"%s\",\"label\":\"%s\","
+           "\"mac\":\"%s\",\"ssid\":\"%s\",\"role\":\"%s\",\"label\":\"%s\","
            "\"rssi\":%d,\"channel\":%u,\"frame_type\":%u,"
            "\"frame_subtype\":%u,\"wildcard_probe\":%s,"
            "\"confidence\":%u,\"uptime_ms\":%lu}\n",
-           DEVICE_NAME, event.mac, event.role, event.label, event.rssi,
+           DEVICE_NAME, event.mac, escapedSsid.c_str(), event.role,
+           escapedLabel.c_str(), event.rssi,
            event.channel, event.frameType, event.frameSubtype,
            event.wildcardProbe ? "true" : "false", event.confidence,
            static_cast<unsigned long>(event.uptimeMs));

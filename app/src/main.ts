@@ -19,6 +19,7 @@ const NOTIFY_UUID = '7d1d0002-52a1-4b81-9fd2-fd7ec3f50100';
 const COMMAND_UUID = '7d1d0003-52a1-4b81-9fd2-fd7ec3f50100';
 const STORAGE_KEY = 'roadlens.spots.v1';
 const FIELD_OBSERVATION_STORAGE_KEY = 'roadlens.field-observations.v1';
+const MAP_LEARNING_STORAGE_KEY = 'roadlens.map-learning.v1';
 const APP_VERSION = __APP_VERSION__;
 const UPDATE_REPO = __GITHUB_REPO__;
 const APP_NAME = 'RoadLens Scout';
@@ -44,6 +45,9 @@ const CAMERA_SEED_NEAR_RADIUS_METERS = 260;
 const CAMERA_SEED_VISIT_RADIUS_METERS = 160;
 const CAMERA_SEED_VISIT_COOLDOWN_MS = 10 * 60 * 1000;
 const CAMERA_SEED_GRID_DEGREES = 0.1;
+const MAP_AUTO_CENTER_COOLDOWN_MS = 90 * 1000;
+const MAP_AUTO_CENTER_INTERVAL_MS = 12 * 1000;
+const MAP_AUTO_CENTER_DISTANCE_METERS = 35;
 
 const DEFAULT_WIFI_PREFIXES = [
   '70:c9:4e', '3c:91:80', 'd8:f3:bc', '80:30:49', 'b8:35:32',
@@ -58,6 +62,12 @@ const DEFAULT_WIFI_PREFIXES = [
 ];
 const DEFAULT_BLE_NAME_PATTERNS = ['FS Ext Battery', 'Penguin', 'Flock', 'Pigvision'];
 const DEFAULT_BLE_MANUFACTURER_IDS = [0x09c8];
+const DEFAULT_WIFI_SSID_PATTERNS = [
+  { pattern: '^Flock-[A-Z0-9]+$', label: 'flock-wifi-ssid', confidence: 88, match: 'regex' },
+  { pattern: 'FS Ext Battery', label: 'flock-wifi-battery-ssid', confidence: 86, match: 'contains' },
+  { pattern: 'Penguin', label: 'flock-wifi-penguin-ssid', confidence: 84, match: 'contains' },
+  { pattern: 'Pigvision', label: 'flock-wifi-pigvision-ssid', confidence: 84, match: 'contains' },
+] as const;
 const DEFAULT_RAVEN_SERVICE_UUIDS = [
   '0000180a-0000-1000-8000-00805f9b34fb',
   '00003100-0000-1000-8000-00805f9b34fb',
@@ -167,6 +177,7 @@ type DetectionMessage = {
   source: string;
   detector?: string;
   mac?: string;
+  ssid?: string;
   role?: string;
   label?: string;
   rssi?: number;
@@ -233,6 +244,7 @@ type SiteMeta = {
     bleNamePatterns: number;
     bleManufacturerIds: number;
     ravenServiceUuids?: number;
+    wifiSsidPatterns?: number;
   };
   cameraSeeds?: {
     path: string;
@@ -249,6 +261,13 @@ type SignaturePrefix = {
   label?: string;
   allowLocalAdministered?: boolean;
   wildcardProbe?: boolean;
+};
+
+type WifiSsidPattern = {
+  pattern: string;
+  label: string;
+  confidence: number;
+  match: 'regex' | 'contains' | 'exact';
 };
 
 type SignatureSource = {
@@ -268,6 +287,7 @@ type SignatureFeed = {
   bleNamePatterns: string[];
   bleManufacturerIds: number[];
   ravenServiceUuids: string[];
+  wifiSsidPatterns: WifiSsidPattern[];
 };
 
 type SignatureIndex = {
@@ -275,6 +295,7 @@ type SignatureIndex = {
   bleNamePatterns: string[];
   bleManufacturerIds: Set<number>;
   ravenServiceUuids: Set<string>;
+  wifiSsidPatterns: WifiSsidPattern[];
 };
 
 type CameraSeedSource = {
@@ -319,6 +340,17 @@ type CameraSeedIndex = {
 type NearbyCameraSeed = {
   seed: CameraSeed;
   distanceMeters: number;
+};
+
+type MapLearningState = {
+  version: 1;
+  centerCount: number;
+  preferredZoom: number;
+  followMode: boolean;
+  lastCenteredAt: number;
+  lastLat?: number;
+  lastLon?: number;
+  lastAccuracy?: number;
 };
 
 type FieldObservation = {
@@ -370,6 +402,10 @@ let activeCameraSeeds: CameraSeedFeed = buildEmptyCameraSeedFeed();
 let cameraSeedIndex: CameraSeedIndex = buildCameraSeedIndex(activeCameraSeeds.points);
 let cameraSeedFetchPromise: Promise<CameraSeedFeed> | null = null;
 let nearestCameraSeed: NearbyCameraSeed | null = null;
+let mapLearning: MapLearningState = readMapLearningState();
+let programmaticMapMoveUntil = 0;
+let lastUserMapInteractionAt = 0;
+let lastAutoCenterAt = 0;
 
 type WifiReadoutState = 'unknown' | 'connected' | 'limited' | 'offline' | 'error';
 
@@ -404,6 +440,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <div class="map-title">
           <span>Live field map</span>
           <strong id="mapFocusText">Ready for sightings</strong>
+        </div>
+        <div class="map-tools">
+          <button id="locateButton" class="map-tool" title="Center to my location" aria-label="Center to my location">
+            <i data-lucide="locate-fixed"></i>
+          </button>
         </div>
         <div class="telemetry">
           <div>
@@ -533,6 +574,7 @@ const shell = document.querySelector<HTMLElement>('.shell')!;
 const statusText = document.querySelector<HTMLSpanElement>('#statusText')!;
 const statusPill = document.querySelector<HTMLDivElement>('#statusPill')!;
 const mapFocusText = document.querySelector<HTMLElement>('#mapFocusText')!;
+const locateButton = document.querySelector<HTMLButtonElement>('#locateButton')!;
 const spotCount = document.querySelector<HTMLSpanElement>('#spotCount')!;
 const targetCount = document.querySelector<HTMLSpanElement>('#targetCount')!;
 const gpsText = document.querySelector<HTMLSpanElement>('#gpsText')!;
@@ -567,6 +609,9 @@ document.querySelector<HTMLButtonElement>('#manualButton')!.addEventListener('cl
 document.querySelector<HTMLButtonElement>('#updateButton')!.addEventListener('click', checkForUpdate);
 document.querySelector<HTMLButtonElement>('#exportButton')!.addEventListener('click', exportGeoJson);
 document.querySelector<HTMLButtonElement>('#clearButton')!.addEventListener('click', clearSpots);
+locateButton.addEventListener('click', () => {
+  void centerToMyLocation({ forceFresh: true });
+});
 document.querySelector<HTMLButtonElement>('#statusButton')!.addEventListener('click', () => sendCommand('status'));
 document.querySelector<HTMLFormElement>('#wifiCredentialForm')!.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -640,7 +685,83 @@ function initMap() {
   markerLayer = L.layerGroup().addTo(map);
   targetLayer = L.layerGroup().addTo(map);
   positionLayer = L.layerGroup().addTo(map);
-  map.on('moveend zoomend', renderSeedMarkers);
+  map.on('movestart zoomstart', noteUserMapInteraction);
+  map.on('moveend zoomend', () => {
+    renderSeedMarkers();
+    learnMapZoomFromUserMove();
+  });
+}
+
+function readMapLearningState(): MapLearningState {
+  try {
+    const raw = localStorage.getItem(MAP_LEARNING_STORAGE_KEY);
+    if (!raw) {
+      return defaultMapLearningState();
+    }
+    const value = JSON.parse(raw) as Partial<MapLearningState> | null;
+    if (!value || value.version !== 1) {
+      return defaultMapLearningState();
+    }
+    const preferredZoom = clampNumber(Number(value.preferredZoom), 14, 19);
+    return {
+      version: 1,
+      centerCount: clampNumber(Number(value.centerCount) || 0, 0, 999),
+      preferredZoom: Number.isFinite(preferredZoom) ? preferredZoom : 17,
+      followMode: Boolean(value.followMode),
+      lastCenteredAt: Number(value.lastCenteredAt) || 0,
+      lastLat: typeof value.lastLat === 'number' && Number.isFinite(value.lastLat) ? value.lastLat : undefined,
+      lastLon: typeof value.lastLon === 'number' && Number.isFinite(value.lastLon) ? value.lastLon : undefined,
+      lastAccuracy:
+        typeof value.lastAccuracy === 'number' && Number.isFinite(value.lastAccuracy) ? value.lastAccuracy : undefined,
+    };
+  } catch {
+    return defaultMapLearningState();
+  }
+}
+
+function defaultMapLearningState(): MapLearningState {
+  return {
+    version: 1,
+    centerCount: 0,
+    preferredZoom: 17,
+    followMode: false,
+    lastCenteredAt: 0,
+  };
+}
+
+function saveMapLearningState() {
+  try {
+    localStorage.setItem(MAP_LEARNING_STORAGE_KEY, JSON.stringify(mapLearning));
+  } catch {
+    // Learning is a local convenience; map operation does not depend on it.
+  }
+}
+
+function noteUserMapInteraction() {
+  if (Date.now() < programmaticMapMoveUntil) {
+    return;
+  }
+  lastUserMapInteractionAt = Date.now();
+  if (mapLearning.followMode) {
+    mapLearning = { ...mapLearning, followMode: false };
+    saveMapLearningState();
+  }
+}
+
+function learnMapZoomFromUserMove() {
+  if (Date.now() < programmaticMapMoveUntil || Date.now() - lastUserMapInteractionAt > 1600) {
+    return;
+  }
+  const zoom = clampNumber(map.getZoom(), 14, 19);
+  if (Math.abs(zoom - mapLearning.preferredZoom) >= 0.25) {
+    mapLearning = { ...mapLearning, preferredZoom: zoom };
+    saveMapLearningState();
+  }
+}
+
+function setSmartMapView(lat: number, lon: number, zoom: number, options: L.ZoomPanOptions = {}) {
+  programmaticMapMoveUntil = Date.now() + 1400;
+  map.setView([lat, lon], zoom, options);
 }
 
 async function connectSensor() {
@@ -1208,8 +1329,8 @@ function renderModuleStatus(status: SensorStatus) {
   const chip = status.chip_family ?? 'unknown chip';
   const signatureDetail =
     typeof status.signature_count === 'number'
-      ? `${status.signature_count} signatures`
-      : `${activeSignatures.wifiPrefixes.length} app signatures`;
+      ? `${status.signature_count} prefixes + ${activeSignatures.wifiSsidPatterns.length} SSID`
+      : `${activeSignatures.wifiPrefixes.length} prefixes + ${activeSignatures.wifiSsidPatterns.length} SSID`;
   if (status.ota_in_progress) {
     setModuleState('Sensor OTA running', `${chip} firmware ${firmware}`);
     moduleOtaButton.disabled = true;
@@ -1497,6 +1618,7 @@ function buildDefaultSignatureFeed(): SignatureFeed {
     bleNamePatterns: [...DEFAULT_BLE_NAME_PATTERNS],
     bleManufacturerIds: [...DEFAULT_BLE_MANUFACTURER_IDS],
     ravenServiceUuids: [...DEFAULT_RAVEN_SERVICE_UUIDS],
+    wifiSsidPatterns: DEFAULT_WIFI_SSID_PATTERNS.map((item) => ({ ...item })),
   };
 }
 
@@ -1530,6 +1652,7 @@ function buildSignatureIndex(feed: SignatureFeed): SignatureIndex {
     bleNamePatterns: feed.bleNamePatterns.map((name) => name.toLowerCase()),
     bleManufacturerIds: new Set(feed.bleManufacturerIds),
     ravenServiceUuids: new Set(feed.ravenServiceUuids.map((uuid) => uuid.toLowerCase())),
+    wifiSsidPatterns: feed.wifiSsidPatterns,
   };
 }
 
@@ -1560,7 +1683,10 @@ async function refreshSignatureFeed(options: { quiet?: boolean } = {}): Promise<
         const feed = normalizeSignatureFeed(await response.json());
         activateSignatureFeed(feed, true);
         if (!options.quiet) {
-          setUsbState('Signatures updated', `${feed.wifiPrefixes.length} Wi-Fi prefixes`);
+          setUsbState(
+            'Signatures updated',
+            `${feed.wifiPrefixes.length} Wi-Fi prefixes, ${feed.wifiSsidPatterns.length} SSID patterns`,
+          );
         }
         return feed;
       } catch (error) {
@@ -1612,6 +1738,7 @@ function normalizeSignatureFeed(raw: unknown): SignatureFeed {
       .map((uuid) => normalizeUuid(String(uuid)))
       .filter(Boolean) as string[],
   );
+  const wifiSsidPatterns = normalizeWifiSsidPatterns(value.wifiSsidPatterns);
 
   return {
     schema: Number(value.schema) || 1,
@@ -1624,6 +1751,7 @@ function normalizeSignatureFeed(raw: unknown): SignatureFeed {
     bleNamePatterns,
     bleManufacturerIds,
     ravenServiceUuids,
+    wifiSsidPatterns,
   };
 }
 
@@ -1655,6 +1783,40 @@ function normalizeWifiPrefixes(raw: unknown): SignaturePrefix[] {
   }
 
   return out;
+}
+
+function normalizeWifiSsidPatterns(raw: unknown): WifiSsidPattern[] {
+  const source = Array.isArray(raw) && raw.length ? raw : DEFAULT_WIFI_SSID_PATTERNS;
+  const seen = new Set<string>();
+  const out: WifiSsidPattern[] = [];
+
+  for (const item of source) {
+    const candidate = item as Partial<WifiSsidPattern> | null;
+    if (!candidate || typeof candidate !== 'object') {
+      continue;
+    }
+    const pattern = String(candidate.pattern ?? '').trim();
+    const match = candidate.match === 'exact' || candidate.match === 'contains' || candidate.match === 'regex'
+      ? candidate.match
+      : 'contains';
+    const label = String(candidate.label ?? 'flock-wifi-ssid').trim() || 'flock-wifi-ssid';
+    const confidence = clampNumber(Number(candidate.confidence) || 84, 50, 99);
+    const key = `${match}:${pattern.toLowerCase()}`;
+    if (!pattern || seen.has(key)) {
+      continue;
+    }
+    if (match === 'regex') {
+      try {
+        new RegExp(pattern);
+      } catch {
+        continue;
+      }
+    }
+    seen.add(key);
+    out.push({ pattern, label, confidence, match });
+  }
+
+  return out.length ? out : DEFAULT_WIFI_SSID_PATTERNS.map((item) => ({ ...item }));
 }
 
 function normalizePrefix(value: string) {
@@ -1939,6 +2101,10 @@ function geoDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: numbe
   return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
 async function maybeSyncSensorSignatures(status: SensorStatus) {
   if (
     signatureSyncBusy ||
@@ -2182,6 +2348,7 @@ async function saveDetection(detection: DetectionMessage) {
     detector: detection.detector ?? SENSOR_NAME,
     label: detection.label ?? 'alpr-signal',
     mac: detection.mac ?? 'unknown',
+    ssid: detection.ssid,
     role: detection.role ?? 'unknown',
     rssi: detection.rssi ?? null,
     channel: detection.channel ?? null,
@@ -2202,12 +2369,12 @@ async function saveDetection(detection: DetectionMessage) {
       focusTarget.sightings >= TARGET_MIN_SIGHTINGS
         ? `Estimated point refined (${focusTarget.sightings} hits)`
         : 'New signal saved';
-    map.setView([focusTarget.lat, focusTarget.lon], Math.max(map.getZoom(), 17), { animate: true });
+    setSmartMapView(focusTarget.lat, focusTarget.lon, Math.max(map.getZoom(), 17), { animate: true });
   } else if (spot.lat != null && spot.lon != null) {
     mapFocusText.textContent = nearbySeed
       ? `Signal saved near ${cameraSeedLabel(nearbySeed.seed)}`
       : 'New signal saved';
-    map.setView([spot.lat, spot.lon], Math.max(map.getZoom(), 17), { animate: true });
+    setSmartMapView(spot.lat, spot.lon, Math.max(map.getZoom(), 17), { animate: true });
   }
 }
 
@@ -2246,7 +2413,7 @@ async function saveManualSpot() {
   mapFocusText.textContent = nearbySeed
     ? `Manual spot near ${cameraSeedLabel(nearbySeed.seed)}`
     : 'Manual spot saved';
-  map.setView([coords.latitude, coords.longitude], 18, { animate: true });
+  setSmartMapView(coords.latitude, coords.longitude, 18, { animate: true });
 }
 
 async function checkForUpdate() {
@@ -2392,6 +2559,123 @@ async function getBestPosition(forceFresh = false): Promise<Position | null> {
   }
 }
 
+async function centerToMyLocation(options: { forceFresh?: boolean } = {}) {
+  locateButton.disabled = true;
+  try {
+    await startLocationWatch();
+    const position = await getBestPosition(Boolean(options.forceFresh));
+    const coords = position?.coords;
+    if (!coords) {
+      setSensorState('error', 'No GPS fix');
+      return;
+    }
+
+    const focus = buildLocationFocus(position);
+    const now = Date.now();
+    const nextCount = mapLearning.centerCount + 1;
+    mapLearning = {
+      ...mapLearning,
+      centerCount: nextCount,
+      preferredZoom: focus.zoom,
+      followMode: nextCount >= 3,
+      lastCenteredAt: now,
+      lastLat: coords.latitude,
+      lastLon: coords.longitude,
+      lastAccuracy: coords.accuracy ?? undefined,
+    };
+    saveMapLearningState();
+    lastAutoCenterAt = now;
+    mapFocusText.textContent = mapLearning.followMode ? `${focus.text} | follow on` : focus.text;
+    setSmartMapView(focus.lat, focus.lon, focus.zoom, { animate: true });
+  } finally {
+    locateButton.disabled = false;
+  }
+}
+
+function buildLocationFocus(position: Position) {
+  const coords = position.coords;
+  const accuracy = coords.accuracy ?? 60;
+  const nearbySeed = findNearestCameraSeed(coords.latitude, coords.longitude, CAMERA_SEED_NEAR_RADIUS_METERS);
+  const nearbyTarget = findNearestVisibleTarget(coords.latitude, coords.longitude, 360);
+  const zoom = chooseLocationZoom(accuracy, nearbySeed, nearbyTarget);
+  let text = accuracy > 80 ? `Centered with ${Math.round(accuracy)}m fix` : 'Centered on you';
+  if (nearbySeed && nearbySeed.distanceMeters <= CAMERA_SEED_VISIT_RADIUS_METERS) {
+    text = `Near known ${cameraSeedLabel(nearbySeed.seed)} (${formatMeters(nearbySeed.distanceMeters)})`;
+  } else if (nearbyTarget) {
+    text = `Near estimated ${prettyLabel(nearbyTarget.target.label)} (${formatMeters(nearbyTarget.distanceMeters)})`;
+  }
+
+  return {
+    lat: coords.latitude,
+    lon: coords.longitude,
+    zoom,
+    text,
+  };
+}
+
+function chooseLocationZoom(
+  accuracy: number,
+  nearbySeed: NearbyCameraSeed | null,
+  nearbyTarget: { target: SmartTarget; distanceMeters: number } | null,
+) {
+  let zoom = accuracy > 120 ? 15 : accuracy > 45 ? 16 : 17;
+  if ((nearbySeed && nearbySeed.distanceMeters <= CAMERA_SEED_VISIT_RADIUS_METERS) || nearbyTarget) {
+    zoom = Math.max(zoom, 18);
+  }
+  if (mapLearning.centerCount >= 2) {
+    zoom = Math.round((zoom + mapLearning.preferredZoom) / 2);
+  }
+  return clampNumber(zoom, 14, 19);
+}
+
+function findNearestVisibleTarget(lat: number, lon: number, maxMeters: number) {
+  let best: { target: SmartTarget; distanceMeters: number } | null = null;
+  for (const target of smartTargets) {
+    if (target.sightings < TARGET_MIN_SIGHTINGS) {
+      continue;
+    }
+    const distance = geoDistanceMeters(lat, lon, target.lat, target.lon);
+    if (distance <= maxMeters && (!best || distance < best.distanceMeters)) {
+      best = { target, distanceMeters: distance };
+    }
+  }
+  return best;
+}
+
+function maybeAutoCenterOnPosition(position: Position) {
+  if (!mapLearning.followMode || Date.now() - lastUserMapInteractionAt < MAP_AUTO_CENTER_COOLDOWN_MS) {
+    return;
+  }
+  const now = Date.now();
+  if (now - lastAutoCenterAt < MAP_AUTO_CENTER_INTERVAL_MS) {
+    return;
+  }
+
+  const coords = position.coords;
+  const lastLat = mapLearning.lastLat;
+  const lastLon = mapLearning.lastLon;
+  const moved =
+    typeof lastLat === 'number' && typeof lastLon === 'number'
+      ? geoDistanceMeters(lastLat, lastLon, coords.latitude, coords.longitude)
+      : Number.POSITIVE_INFINITY;
+  if (moved < MAP_AUTO_CENTER_DISTANCE_METERS) {
+    return;
+  }
+
+  const focus = buildLocationFocus(position);
+  mapLearning = {
+    ...mapLearning,
+    lastCenteredAt: now,
+    lastLat: coords.latitude,
+    lastLon: coords.longitude,
+    lastAccuracy: coords.accuracy ?? undefined,
+  };
+  saveMapLearningState();
+  lastAutoCenterAt = now;
+  mapFocusText.textContent = focus.text === 'Centered on you' ? 'Following your location' : focus.text;
+  setSmartMapView(focus.lat, focus.lon, focus.zoom, { animate: true });
+}
+
 function updateGpsText(position: Position) {
   gpsText.textContent = `${Math.round(position.coords.accuracy ?? 0)}m`;
 }
@@ -2409,6 +2693,7 @@ async function handlePositionUpdate(position: Position) {
     mapFocusText.textContent = `Near known ${cameraSeedLabel(nearby.seed)} (${formatMeters(nearby.distanceMeters)})`;
     await maybeRecordSeedObservation(nearby, position);
   }
+  maybeAutoCenterOnPosition(position);
 }
 
 function render() {
@@ -2465,9 +2750,9 @@ function render() {
   renderPosition();
 
   if (visibleTargets.length > 0 && map.getZoom() <= 4) {
-    map.setView([visibleTargets[0].lat, visibleTargets[0].lon], 15);
+    setSmartMapView(visibleTargets[0].lat, visibleTargets[0].lon, 15);
   } else if (located.length > 0 && map.getZoom() <= 4) {
-    map.setView([located[0].lat, located[0].lon], 15);
+    setSmartMapView(located[0].lat, located[0].lon, 15);
   }
 
   targetList.innerHTML = visibleTargets.length
@@ -2506,7 +2791,7 @@ function render() {
               </div>
               <p>${escapeHtml(spot.mac)} ${spot.channel ? `ch${spot.channel}` : ''} ${
                 spot.rssi != null ? `${spot.rssi} dBm` : ''
-              }</p>
+              }${spot.ssid ? ` ${escapeHtml(spot.ssid)}` : ''}</p>
               <footer>
                 <span>${spot.confidence}%</span>
                 <span>${
@@ -2587,6 +2872,7 @@ function renderSpotPopup(spot: Spot) {
   return (
     `<strong>${escapeHtml(prettyLabel(spot.label))}</strong><br>` +
     `${escapeHtml(spot.mac)} ${spot.channel ? `ch${spot.channel}` : ''}<br>` +
+    `${spot.ssid ? `SSID ${escapeHtml(spot.ssid)}<br>` : ''}` +
     `${new Date(spot.createdAt).toLocaleString()}<br>` +
     `confidence ${spot.confidence}% ${spot.rssi != null ? `| ${spot.rssi} dBm` : ''}` +
     `${spot.seedLabel ? `<br>near ${escapeHtml(spot.seedLabel)} ${spot.seedDistanceMeters != null ? `(${formatMeters(spot.seedDistanceMeters)})` : ''}` : ''}`
@@ -2725,6 +3011,7 @@ function buildFieldReportGeoJson() {
       detector: spot.detector,
       label: spot.label,
       mac: spot.mac,
+      ssid: spot.ssid,
       role: spot.role,
       rssi: spot.rssi,
       channel: spot.channel,
