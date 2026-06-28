@@ -464,6 +464,33 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <span>sensor</span>
           </div>
         </div>
+        <div class="detector-strip" id="detectorStrip" aria-label="Active detector coverage">
+          <div class="detector-chip hot">
+            <i data-lucide="wifi"></i>
+            <strong id="wifiDetectorCount">0</strong>
+            <span>OUI</span>
+          </div>
+          <div class="detector-chip">
+            <i data-lucide="scan-search"></i>
+            <strong id="ssidDetectorCount">0</strong>
+            <span>SSID</span>
+          </div>
+          <div class="detector-chip">
+            <i data-lucide="radio-tower"></i>
+            <strong>On</strong>
+            <span>Probe</span>
+          </div>
+          <div class="detector-chip">
+            <i data-lucide="bluetooth"></i>
+            <strong id="bleDetectorCount">0</strong>
+            <span>BLE</span>
+          </div>
+          <div class="detector-chip">
+            <i data-lucide="radar"></i>
+            <strong id="ravenDetectorCount">0</strong>
+            <span>Raven</span>
+          </div>
+        </div>
         <div class="map-legend">
           <span><b class="legend-dot raw"></b>Signal</span>
           <span><b class="legend-dot target"></b>Estimate</span>
@@ -579,6 +606,10 @@ const spotCount = document.querySelector<HTMLSpanElement>('#spotCount')!;
 const targetCount = document.querySelector<HTMLSpanElement>('#targetCount')!;
 const gpsText = document.querySelector<HTMLSpanElement>('#gpsText')!;
 const signalText = document.querySelector<HTMLSpanElement>('#signalText')!;
+const wifiDetectorCount = document.querySelector<HTMLElement>('#wifiDetectorCount')!;
+const ssidDetectorCount = document.querySelector<HTMLElement>('#ssidDetectorCount')!;
+const bleDetectorCount = document.querySelector<HTMLElement>('#bleDetectorCount')!;
+const ravenDetectorCount = document.querySelector<HTMLElement>('#ravenDetectorCount')!;
 const targetSummary = document.querySelector<HTMLParagraphElement>('#targetSummary')!;
 const targetList = document.querySelector<HTMLDivElement>('#targetList')!;
 const feedList = document.querySelector<HTMLDivElement>('#feedList')!;
@@ -1637,6 +1668,7 @@ function readCachedSignatureFeed() {
 function activateSignatureFeed(feed: SignatureFeed, cache: boolean) {
   activeSignatures = feed;
   signatureIndex = buildSignatureIndex(feed);
+  renderDetectorStrip();
   if (cache) {
     try {
       localStorage.setItem(SIGNATURE_CACHE_KEY, JSON.stringify(feed));
@@ -2701,6 +2733,7 @@ function render() {
   const visibleTargets = smartTargets.filter((target) => target.sightings >= TARGET_MIN_SIGHTINGS);
   const located = spots.filter(hasCoordinates);
 
+  renderDetectorStrip();
   spotCount.textContent = String(spots.length);
   targetCount.textContent = String(visibleTargets.length);
   targetSummary.textContent =
@@ -2805,6 +2838,15 @@ function render() {
         )
         .join('')
     : `<div class="empty">No signals saved</div>`;
+}
+
+function renderDetectorStrip() {
+  wifiDetectorCount.textContent = String(activeSignatures.wifiPrefixes.length);
+  ssidDetectorCount.textContent = String(activeSignatures.wifiSsidPatterns.length);
+  bleDetectorCount.textContent = String(
+    activeSignatures.bleNamePatterns.length + activeSignatures.bleManufacturerIds.length,
+  );
+  ravenDetectorCount.textContent = String(activeSignatures.ravenServiceUuids.length);
 }
 
 function renderPosition() {

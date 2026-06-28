@@ -226,6 +226,7 @@ h1 {
 
 .map-title,
 .map-tools,
+.detector-strip,
 .telemetry,
 .map-legend {
   position: absolute;
@@ -233,6 +234,7 @@ h1 {
 }
 
 .map-title,
+.detector-strip,
 .telemetry,
 .map-legend {
   border: 1px solid rgba(65, 85, 97, 0.52);
@@ -277,15 +279,68 @@ h1 {
   height: 46px;
   min-height: 46px;
   padding: 0;
-  border-color: rgba(65, 85, 97, 0.62);
-  background: rgba(13, 18, 22, 0.86);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
+  border-color: rgba(124, 248, 206, 0.36);
+  background: linear-gradient(135deg, rgba(124, 248, 206, 0.96), rgba(32, 201, 151, 0.92));
+  color: #071410;
+  box-shadow:
+    0 0 0 5px rgba(32, 201, 151, 0.12),
+    0 14px 34px rgba(0, 0, 0, 0.28);
   backdrop-filter: blur(14px);
 }
 
 .map-tool svg {
   width: 21px;
   height: 21px;
+}
+
+.detector-strip {
+  left: 16px;
+  top: 92px;
+  max-width: min(640px, calc(100% - 32px));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.detector-chip {
+  min-width: 86px;
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(65, 85, 97, 0.58);
+  border-radius: 8px;
+  background: rgba(22, 34, 41, 0.9);
+  padding: 8px 9px;
+}
+
+.detector-chip.hot {
+  border-color: rgba(124, 248, 206, 0.4);
+  background: rgba(32, 201, 151, 0.16);
+}
+
+.detector-chip svg {
+  width: 17px;
+  height: 17px;
+  color: var(--mint-2);
+}
+
+.detector-chip strong {
+  color: var(--mint-2);
+  font-size: 15px;
+  line-height: 1;
+  font-weight: 880;
+}
+
+.detector-chip span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 760;
+  white-space: nowrap;
 }
 
 .telemetry {
@@ -807,6 +862,7 @@ h1 {
 
   .shell:not([data-mobile-tab="map"]) .map-title,
   .shell:not([data-mobile-tab="map"]) .map-tools,
+  .shell:not([data-mobile-tab="map"]) .detector-strip,
   .shell:not([data-mobile-tab="map"]) .telemetry,
   .shell:not([data-mobile-tab="map"]) .map-wrap .leaflet-control-container {
     display: none;
@@ -1072,6 +1128,42 @@ h1 {
 
   .telemetry span + span {
     font-size: 10px;
+  }
+
+  .detector-strip {
+    top: 150px;
+    left: 10px;
+    right: 10px;
+    max-width: none;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .detector-chip {
+    min-width: 0;
+    min-height: 40px;
+    grid-template-columns: 1fr;
+    justify-items: center;
+    gap: 3px;
+    padding: 6px 4px;
+  }
+
+  .detector-chip svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .detector-chip strong {
+    font-size: 14px;
+  }
+
+  .detector-chip span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 9px;
   }
 
   .feed-head,
