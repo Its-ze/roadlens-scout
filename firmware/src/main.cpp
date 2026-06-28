@@ -12,7 +12,7 @@
 #include "signatures.h"
 
 #ifndef ROADLENS_FIRMWARE_VERSION
-#define ROADLENS_FIRMWARE_VERSION "0.1.14"
+#define ROADLENS_FIRMWARE_VERSION "0.1.15"
 #endif
 
 #ifndef ROADLENS_CHIP_FAMILY
@@ -726,8 +726,8 @@ static void emitDetection(const DetectionEvent &event) {
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer *) override {
     bleConnected = true;
-    snifferStartRequested = true;
-    snifferStartAtMs = millis() + 4500;
+    snifferStartRequested = false;
+    snifferStartAtMs = 0;
   }
 
   void onDisconnect(NimBLEServer *) override {
@@ -1092,7 +1092,7 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
       emitStatus("command");
     } else if (lowerCommand == "start-scan") {
       snifferStartRequested = true;
-      snifferStartAtMs = millis() + 250;
+      snifferStartAtMs = millis() + 1200;
       emitStatus("scan-starting");
     } else if (lowerCommand == "stop-scan") {
       snifferStartRequested = false;
@@ -1151,7 +1151,7 @@ static void stopSniffer() {
 
   esp_wifi_set_promiscuous(false);
   esp_wifi_set_promiscuous_rx_cb(nullptr);
-  WiFi.disconnect(true, true);
+  WiFi.disconnect(false, false);
   WiFi.mode(WIFI_OFF);
   wifiSnifferActive = false;
 }
@@ -1162,7 +1162,7 @@ static void setupSniffer() {
   }
 
   WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true, true);
+  WiFi.disconnect(false, false);
 
   wifi_promiscuous_filter_t filter = {};
   filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA;

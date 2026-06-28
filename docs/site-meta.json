@@ -1,36 +1,36 @@
 {
     "name":  "RoadLens Scout",
-    "version":  "0.1.14",
-    "generatedAt":  "2026-06-28T12:23:21Z",
+    "version":  "0.1.15",
+    "generatedAt":  "2026-06-28T13:23:50Z",
     "apk":  {
-                "path":  "https://github.com/Its-ze/roadlens-scout/releases/download/v0.1.14/roadlens-scout-v0.1.14-debug.apk",
-                "asset":  "roadlens-scout-v0.1.14-debug.apk",
-                "bytes":  10483065,
-                "sha256":  "47602623ebcbbe3e570ada7a368dc22c850df98944278d66fd9ca90518b83c2f"
+                "path":  "https://github.com/Its-ze/roadlens-scout/releases/download/v0.1.15/roadlens-scout-v0.1.15-debug.apk",
+                "asset":  "roadlens-scout-v0.1.15-debug.apk",
+                "bytes":  10483045,
+                "sha256":  "f94c66fed5207b5db82175da5b79632c956328d365b1e60fcb9cc51859c60bab"
             },
     "firmware":  {
                      "manifest":  "flasher/manifest.json",
                      "path":  "flasher/firmware/esp32/firmware.bin",
-                     "bytes":  1193216,
-                     "sha256":  "1c0f1d2e697dcf432c02d693266e8df093b6a7ad31dd07be621b07eca2db88b6",
+                     "bytes":  1193184,
+                     "sha256":  "edc72bdd1a77e27d229bcaedddff4d6f714076d2fb2622ef5f16ab1108fb06c4",
                      "builds":  [
                                     {
                                         "chipFamily":  "ESP32",
                                         "path":  "flasher/firmware/esp32/firmware.bin",
-                                        "bytes":  1193216,
-                                        "sha256":  "1c0f1d2e697dcf432c02d693266e8df093b6a7ad31dd07be621b07eca2db88b6"
+                                        "bytes":  1193184,
+                                        "sha256":  "edc72bdd1a77e27d229bcaedddff4d6f714076d2fb2622ef5f16ab1108fb06c4"
                                     },
                                     {
                                         "chipFamily":  "ESP32-S3",
                                         "path":  "flasher/firmware/esp32s3/firmware.bin",
-                                        "bytes":  1071504,
-                                        "sha256":  "2070cab3f907659125ae13f3b6cdfd5de1b86d441fdc394d725fad6df3964b49"
+                                        "bytes":  1071472,
+                                        "sha256":  "4d61739ccf14af6f1006dc0c66cf3cc15b874bd4ec32b94ed6f2d6b07183f803"
                                     },
                                     {
                                         "chipFamily":  "ESP32-C3",
                                         "path":  "flasher/firmware/esp32c3/firmware.bin",
-                                        "bytes":  1155376,
-                                        "sha256":  "02e304ca407b1b9b794f444a8c0f11e63cd3aa527ae4b1f00bae03271257215a"
+                                        "bytes":  1155344,
+                                        "sha256":  "c9542acf8f95b9e68b86bbeb311392a946638abc8e33fd7c462a8e346c3aa7f6"
                                     }
                                 ]
                  },

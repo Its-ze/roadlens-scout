@@ -34,7 +34,11 @@ const PHONE_BLE_SWEEP_MS = 15000;
 const OTA_CREDENTIAL_CHUNK_BYTES = 6;
 const OTA_HASH_CHUNK_CHARS = 12;
 const OTA_COMMAND_DELAY_MS = 45;
-const SIGNATURE_COMMAND_DELAY_MS = 35;
+const BLE_HANDSHAKE_SETTLE_MS = 900;
+const SENSOR_STATUS_WAIT_MS = 2500;
+const SENSOR_SCAN_START_DELAY_MS = 1250;
+const AUTOMATIC_SIGNATURE_SYNC_SUPPRESS_MS = 12000;
+const SIGNATURE_COMMAND_DELAY_MS = 85;
 const MAX_SENSOR_SIGNATURE_PREFIXES = 96;
 const COMMAND_WRITE_TIMEOUT_MS = 4500;
 const COMMAND_WRITE_FALLBACK_TIMEOUT_MS = 7500;
@@ -398,6 +402,7 @@ let signatureIndex: SignatureIndex = buildSignatureIndex(activeSignatures);
 let signatureFetchPromise: Promise<SignatureFeed> | null = null;
 let signatureSyncBusy = false;
 let signatureSyncedForKey = '';
+let automaticSignatureSyncPausedUntil = 0;
 let activeCameraSeeds: CameraSeedFeed = buildEmptyCameraSeedFeed();
 let cameraSeedIndex: CameraSeedIndex = buildCameraSeedIndex(activeCameraSeeds.points);
 let cameraSeedFetchPromise: Promise<CameraSeedFeed> | null = null;
@@ -830,9 +835,7 @@ async function connectSensor() {
     setSensorState('online', `${device.name ?? SENSOR_NAME} connected`);
     signalText.textContent = 'Linked';
     updateConnectionButton();
-    await sendCommandWithRetry('status', 2);
-    await delay(150);
-    await sendCommandWithRetry('start-scan', 2);
+    await stabilizeSensorAfterConnect();
   } catch (error) {
     if (device) {
       await BleClient.disconnect(device.deviceId).catch(() => undefined);
@@ -844,6 +847,77 @@ async function connectSensor() {
     connectButton.disabled = false;
     updateConnectionButton();
   }
+}
+
+async function stabilizeSensorAfterConnect() {
+  automaticSignatureSyncPausedUntil = Date.now() + AUTOMATIC_SIGNATURE_SYNC_SUPPRESS_MS;
+  try {
+    setSensorState('busy', 'Stabilizing BLE link');
+    await delay(BLE_HANDSHAKE_SETTLE_MS);
+    if (!connectedDevice) {
+      return;
+    }
+
+    // Cancel any pending scan from older firmware before sending a command burst.
+    await sendCommandWithRetry('stop-scan', 1).catch(() => undefined);
+    await delay(150);
+    if (!connectedDevice) {
+      return;
+    }
+
+    let startupStatus: SensorStatus | null = null;
+    try {
+      await sendCommandWithRetry('status', 2);
+      startupStatus = await waitForSensorStatus(SENSOR_STATUS_WAIT_MS);
+    } catch (error) {
+      setModuleState('Sensor linked', error instanceof Error ? error.message : 'Status check delayed');
+    }
+    if (!connectedDevice) {
+      return;
+    }
+
+    if (startupStatus) {
+      try {
+        await maybeSyncSensorSignatures(startupStatus, { force: true });
+      } catch (error) {
+        setModuleState('Signature sync delayed', error instanceof Error ? error.message : 'Using sensor list');
+      }
+    }
+    if (!connectedDevice) {
+      return;
+    }
+
+    await delay(SENSOR_SCAN_START_DELAY_MS);
+    if (!connectedDevice) {
+      return;
+    }
+
+    try {
+      await sendCommandWithRetry('start-scan', 2);
+      if (connectedDevice) {
+        setSensorState('online', `${connectedDevice.name ?? SENSOR_NAME} scanning`);
+      }
+    } catch (error) {
+      setSensorState('online', `${connectedDevice?.name ?? SENSOR_NAME} linked`);
+      setModuleState('Scan start delayed', error instanceof Error ? error.message : 'Tap Connect again if needed');
+    }
+  } finally {
+    automaticSignatureSyncPausedUntil = 0;
+  }
+}
+
+async function waitForSensorStatus(timeoutMs: number) {
+  const existingStatus = lastSensorStatus;
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs && connectedDevice) {
+    if (lastSensorStatus && lastSensorStatus !== existingStatus) {
+      return lastSensorStatus;
+    }
+    await delay(100);
+  }
+
+  return lastSensorStatus;
 }
 
 async function disconnectSensor() {
@@ -873,6 +947,7 @@ function handleSensorDisconnect() {
   moduleUpdateBusy = false;
   signatureSyncBusy = false;
   signatureSyncedForKey = '';
+  automaticSignatureSyncPausedUntil = 0;
   moduleOtaButton.disabled = false;
   notificationBuffer = '';
   setSensorState('offline', 'Sensor disconnected');
@@ -991,30 +1066,55 @@ function delay(ms: number) {
   });
 }
 
-async function sendCommand(command: string) {
+type SendCommandOptions = {
+  preferResponse?: boolean;
+};
+
+async function sendCommand(command: string, options: SendCommandOptions = {}) {
   if (!connectedDevice) {
     setSensorState('offline', 'Sensor offline');
-    return;
+    throw new Error('Sensor offline');
   }
+  const deviceId = connectedDevice.deviceId;
   const bytes = encoder.encode(`${command}\n`);
   const value = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  try {
-    await BleClient.writeWithoutResponse(
-      connectedDevice.deviceId,
+
+  const writeWithResponse = () =>
+    BleClient.write(
+      deviceId,
+      SERVICE_UUID,
+      COMMAND_UUID,
+      value,
+      { timeout: COMMAND_WRITE_FALLBACK_TIMEOUT_MS },
+    );
+  const writeWithoutResponse = () =>
+    BleClient.writeWithoutResponse(
+      deviceId,
       SERVICE_UUID,
       COMMAND_UUID,
       value,
       { timeout: COMMAND_WRITE_TIMEOUT_MS },
     );
+
+  if (options.preferResponse) {
+    try {
+      await writeWithResponse();
+      return;
+    } catch (withResponseError) {
+      try {
+        await writeWithoutResponse();
+        return;
+      } catch (noResponseError) {
+        throw new Error(commandWriteErrorMessage(command, noResponseError, withResponseError));
+      }
+    }
+  }
+
+  try {
+    await writeWithoutResponse();
   } catch (noResponseError) {
     try {
-      await BleClient.write(
-        connectedDevice.deviceId,
-        SERVICE_UUID,
-        COMMAND_UUID,
-        value,
-        { timeout: COMMAND_WRITE_FALLBACK_TIMEOUT_MS },
-      );
+      await writeWithResponse();
     } catch (withResponseError) {
       throw new Error(commandWriteErrorMessage(command, noResponseError, withResponseError));
     }
@@ -2137,13 +2237,17 @@ function clampNumber(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-async function maybeSyncSensorSignatures(status: SensorStatus) {
+async function maybeSyncSensorSignatures(status: SensorStatus, options: { force?: boolean } = {}) {
   if (
     signatureSyncBusy ||
     !connectedDevice ||
     !status.signature_sync_supported ||
     status.ota_in_progress
   ) {
+    return;
+  }
+
+  if (!options.force && (Date.now() < automaticSignatureSyncPausedUntil || status.sniffer_active)) {
     return;
   }
 
@@ -2187,7 +2291,7 @@ async function syncSensorSignatures(feed: SignatureFeed, targetVersion: string) 
 }
 
 async function sendSensorStagedCommand(command: string) {
-  await sendCommand(command);
+  await sendCommand(command, { preferResponse: true });
   await delay(SIGNATURE_COMMAND_DELAY_MS);
 }
 
