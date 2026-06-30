@@ -1,6 +1,6 @@
 f94c66fed5207b5db82175da5b79632c956328d365b1e60fcb9cc51859c60bab  https://github.com/Its-ze/roadlens-scout/releases/download/v0.1.15/roadlens-scout-v0.1.15-debug.apk
 e22781c81fd7e7ab548b483877b78c44c37ff5291ab4def887e6eb28918550bd  signatures.json
-5344964d2c80f43fd71f22b1672db72c2015abf01232fa42dfd8c17caff52ab2  camera-seeds.json
+d421b36b3c946f3cf9ce77e858e0017e6a628162f085e195d48d6b197c266a5e  camera-seeds.json
 f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0  flasher/firmware/esp32/boot_app0.bin
 3d234a7471f67b013686dabd4dee7c1fa915c9928463616a94bc9297acf1abf8  flasher/firmware/esp32/bootloader.bin
 edc72bdd1a77e27d229bcaedddff4d6f714076d2fb2622ef5f16ab1108fb06c4  flasher/firmware/esp32/firmware.bin
