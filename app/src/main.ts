@@ -42,6 +42,8 @@ const SIGNATURE_COMMAND_DELAY_MS = 85;
 const MAX_SENSOR_SIGNATURE_PREFIXES = 96;
 const COMMAND_WRITE_TIMEOUT_MS = 4500;
 const COMMAND_WRITE_FALLBACK_TIMEOUT_MS = 7500;
+const MAX_RECONNECT_ATTEMPTS = 3;
+const RECONNECT_BASE_DELAY_MS = 1200;
 const MAX_FIELD_OBSERVATIONS = 2000;
 const CAMERA_SEED_RENDER_MIN_ZOOM = 11;
 const CAMERA_SEED_RENDER_LIMIT = 450;
@@ -411,6 +413,10 @@ let mapLearning: MapLearningState = readMapLearningState();
 let programmaticMapMoveUntil = 0;
 let lastUserMapInteractionAt = 0;
 let lastAutoCenterAt = 0;
+let lastConnectedDevice: BleDevice | null = null;
+let reconnectAttempt = 0;
+let reconnectTimer: number | null = null;
+let intentionalDisconnect = false;
 
 type WifiReadoutState = 'unknown' | 'connected' | 'limited' | 'offline' | 'error';
 
@@ -503,6 +509,43 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <span><b class="legend-dot you"></b>You</span>
         </div>
       </div>
+
+      <section class="action-center" aria-labelledby="actionCenterTitle">
+        <div class="action-center-head">
+          <div>
+            <span class="eyebrow">Field controls</span>
+            <h2 id="actionCenterTitle">Scout Actions</h2>
+          </div>
+          <span class="version-badge">v${APP_VERSION}</span>
+        </div>
+
+        <div class="connection-panel">
+          <div class="connection-icon"><i data-lucide="bluetooth"></i></div>
+          <div>
+            <span>ESP32 sensor</span>
+            <strong id="actionSensorSummary">Sensor offline</strong>
+          </div>
+          <button id="mobileConnectButton" class="primary">
+            <i data-lucide="bluetooth"></i><span>Connect</span>
+          </button>
+        </div>
+
+        <div class="action-grid">
+          <button id="mobileManualButton"><i data-lucide="map-pin-plus"></i><span>Save spot</span></button>
+          <button id="mobileLocateButton"><i data-lucide="locate-fixed"></i><span>Center map</span></button>
+          <button id="mobileUpdateButton"><i data-lucide="cloud-download"></i><span>Update app</span></button>
+          <button id="mobileBleSweepButton"><i data-lucide="radar"></i><span>BLE sweep</span></button>
+          <button id="mobileExportButton"><i data-lucide="download"></i><span>Export data</span></button>
+          <button id="mobileClearButton" class="danger"><i data-lucide="trash-2"></i><span>Clear data</span></button>
+        </div>
+
+        <div class="action-readouts">
+          <div><i data-lucide="navigation"></i><span>GPS</span><strong id="actionGpsSummary">Waiting</strong></div>
+          <div><i data-lucide="wifi"></i><span>Wi-Fi</span><strong id="actionWifiSummary">Not checked</strong></div>
+          <div><i data-lucide="cpu"></i><span>Firmware</span><strong id="actionFirmwareSummary">Not linked</strong></div>
+          <div><i data-lucide="database"></i><span>Local data</span><strong id="actionDataSummary">0 signals</strong></div>
+        </div>
+      </section>
 
       <aside class="feed">
         <div class="feed-head">
@@ -619,6 +662,17 @@ const targetSummary = document.querySelector<HTMLParagraphElement>('#targetSumma
 const targetList = document.querySelector<HTMLDivElement>('#targetList')!;
 const feedList = document.querySelector<HTMLDivElement>('#feedList')!;
 const connectButton = document.querySelector<HTMLButtonElement>('#connectButton')!;
+const mobileConnectButton = document.querySelector<HTMLButtonElement>('#mobileConnectButton')!;
+const connectionButtons = [connectButton, mobileConnectButton];
+const updateButtons = [
+  document.querySelector<HTMLButtonElement>('#updateButton')!,
+  document.querySelector<HTMLButtonElement>('#mobileUpdateButton')!,
+];
+const actionSensorSummary = document.querySelector<HTMLElement>('#actionSensorSummary')!;
+const actionGpsSummary = document.querySelector<HTMLElement>('#actionGpsSummary')!;
+const actionWifiSummary = document.querySelector<HTMLElement>('#actionWifiSummary')!;
+const actionFirmwareSummary = document.querySelector<HTMLElement>('#actionFirmwareSummary')!;
+const actionDataSummary = document.querySelector<HTMLElement>('#actionDataSummary')!;
 const usbSummary = document.querySelector<HTMLSpanElement>('#usbSummary')!;
 const usbDeviceCard = document.querySelector<HTMLDivElement>('#usbDeviceCard')!;
 const usbScanButton = document.querySelector<HTMLButtonElement>('#usbScanButton')!;
@@ -634,18 +688,28 @@ const mobileTabButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>('[data-mobile-tab-target]'),
 );
 
-connectButton.addEventListener('click', () => {
-  if (connectedDevice) {
-    void disconnectSensor();
-  } else {
-    void connectSensor();
-  }
+connectionButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    if (connectedDevice) {
+      void disconnectSensor();
+    } else {
+      void connectSensor();
+    }
+  });
 });
 document.querySelector<HTMLButtonElement>('#manualButton')!.addEventListener('click', saveManualSpot);
+document.querySelector<HTMLButtonElement>('#mobileManualButton')!.addEventListener('click', saveManualSpot);
 document.querySelector<HTMLButtonElement>('#updateButton')!.addEventListener('click', checkForUpdate);
+document.querySelector<HTMLButtonElement>('#mobileUpdateButton')!.addEventListener('click', checkForUpdate);
 document.querySelector<HTMLButtonElement>('#exportButton')!.addEventListener('click', exportGeoJson);
+document.querySelector<HTMLButtonElement>('#mobileExportButton')!.addEventListener('click', exportGeoJson);
 document.querySelector<HTMLButtonElement>('#clearButton')!.addEventListener('click', clearSpots);
+document.querySelector<HTMLButtonElement>('#mobileClearButton')!.addEventListener('click', clearSpots);
 locateButton.addEventListener('click', () => {
+  void centerToMyLocation({ forceFresh: true });
+});
+document.querySelector<HTMLButtonElement>('#mobileLocateButton')!.addEventListener('click', () => {
+  setMobileTab('map');
   void centerToMyLocation({ forceFresh: true });
 });
 document.querySelector<HTMLButtonElement>('#statusButton')!.addEventListener('click', () => sendCommand('status'));
@@ -665,6 +729,9 @@ usbFlashButton.addEventListener('click', () => {
   void openPhoneFlasher();
 });
 bleSweepButton.addEventListener('click', () => {
+  void runPhoneBleSweep();
+});
+document.querySelector<HTMLButtonElement>('#mobileBleSweepButton')!.addEventListener('click', () => {
   void runPhoneBleSweep();
 });
 wifiFillButton.addEventListener('click', () => {
@@ -803,50 +870,68 @@ function setSmartMapView(lat: number, lon: number, zoom: number, options: L.Zoom
 async function connectSensor() {
   let device: BleDevice | null = null;
   try {
-    connectButton.disabled = true;
+    intentionalDisconnect = false;
+    cancelReconnect();
+    setConnectionButtonsDisabled(true);
     setSensorState('busy', 'Preparing Bluetooth');
     await startLocationWatch();
     await BleClient.initialize({ androidNeverForLocation: false });
 
     device = await findSensorDevice();
-
-    setSensorState('busy', `Connecting to ${device.name ?? 'sensor'}`);
-    await BleClient.disconnect(device.deviceId).catch(() => undefined);
-    await delay(250);
-    await BleClient.connect(device.deviceId, () => {
-      handleSensorDisconnect();
-    }, { timeout: 15000 });
-
-    connectedDevice = device;
-    lastSensorStatus = null;
-    moduleUpdatePromptedForVersion = '';
-    signatureSyncedForKey = '';
-    await BleClient.requestConnectionPriority(
-      device.deviceId,
-      ConnectionPriority.CONNECTION_PRIORITY_HIGH,
-    ).catch(() => undefined);
-    await BleClient.startNotifications(
-      device.deviceId,
-      SERVICE_UUID,
-      NOTIFY_UUID,
-      handleNotification,
-      { timeout: 10000 },
-    );
-    setSensorState('online', `${device.name ?? SENSOR_NAME} connected`);
-    signalText.textContent = 'Linked';
-    updateConnectionButton();
-    await stabilizeSensorAfterConnect();
+    await attachSensor(device, { clearExistingLink: true });
+    reconnectAttempt = 0;
   } catch (error) {
+    intentionalDisconnect = true;
     if (device) {
       await BleClient.disconnect(device.deviceId).catch(() => undefined);
     }
+    cancelReconnect();
+    intentionalDisconnect = false;
     connectedDevice = null;
     setSensorState('error', error instanceof Error ? error.message : 'Connection failed');
     signalText.textContent = 'Error';
   } finally {
-    connectButton.disabled = false;
+    setConnectionButtonsDisabled(false);
     updateConnectionButton();
   }
+}
+
+async function attachSensor(device: BleDevice, options: { clearExistingLink?: boolean } = {}) {
+  setSensorState('busy', `Connecting to ${device.name ?? 'sensor'}`);
+  if (options.clearExistingLink) {
+    await BleClient.disconnect(device.deviceId).catch(() => undefined);
+    await delay(250);
+  }
+  await BleClient.connect(
+    device.deviceId,
+    () => {
+      if (connectedDevice?.deviceId === device.deviceId) {
+        handleSensorDisconnect({ unexpected: !intentionalDisconnect, device });
+      }
+    },
+    { timeout: 15000 },
+  );
+
+  connectedDevice = device;
+  lastConnectedDevice = device;
+  lastSensorStatus = null;
+  moduleUpdatePromptedForVersion = '';
+  signatureSyncedForKey = '';
+  await BleClient.requestConnectionPriority(
+    device.deviceId,
+    ConnectionPriority.CONNECTION_PRIORITY_HIGH,
+  ).catch(() => undefined);
+  await BleClient.startNotifications(
+    device.deviceId,
+    SERVICE_UUID,
+    NOTIFY_UUID,
+    handleNotification,
+    { timeout: 10000 },
+  );
+  setSensorState('online', `${device.name ?? SENSOR_NAME} connected`);
+  signalText.textContent = 'Linked';
+  updateConnectionButton();
+  await stabilizeSensorAfterConnect();
 }
 
 async function stabilizeSensorAfterConnect() {
@@ -927,7 +1012,9 @@ async function disconnectSensor() {
   }
 
   const deviceId = connectedDevice.deviceId;
-  connectButton.disabled = true;
+  intentionalDisconnect = true;
+  cancelReconnect();
+  setConnectionButtonsDisabled(true);
   setSensorState('busy', 'Disconnecting sensor');
 
   try {
@@ -936,12 +1023,14 @@ async function disconnectSensor() {
     await BleClient.stopNotifications(deviceId, SERVICE_UUID, NOTIFY_UUID).catch(() => undefined);
     await BleClient.disconnect(deviceId).catch(() => undefined);
   } finally {
-    connectButton.disabled = false;
-    handleSensorDisconnect();
+    setConnectionButtonsDisabled(false);
+    handleSensorDisconnect({ unexpected: false });
+    intentionalDisconnect = false;
   }
 }
 
-function handleSensorDisconnect() {
+function handleSensorDisconnect(options: { unexpected?: boolean; device?: BleDevice } = {}) {
+  const reconnectDevice = options.device ?? connectedDevice ?? lastConnectedDevice;
   connectedDevice = null;
   lastSensorStatus = null;
   moduleUpdateBusy = false;
@@ -950,19 +1039,74 @@ function handleSensorDisconnect() {
   automaticSignatureSyncPausedUntil = 0;
   moduleOtaButton.disabled = false;
   notificationBuffer = '';
-  setSensorState('offline', 'Sensor disconnected');
+  setSensorState(options.unexpected ? 'busy' : 'offline', options.unexpected ? 'Sensor link lost' : 'Sensor disconnected');
   setModuleState('Sensor firmware', 'Connect RoadLensESP32');
   signalText.textContent = 'Offline';
   updateConnectionButton();
+  if (options.unexpected && !intentionalDisconnect && reconnectDevice) {
+    scheduleReconnect(reconnectDevice);
+  }
 }
 
 function updateConnectionButton() {
   const icon = connectedDevice ? 'bluetooth-off' : 'bluetooth';
   const label = connectedDevice ? 'Disconnect' : 'Connect';
-  connectButton.classList.toggle('danger', Boolean(connectedDevice));
-  connectButton.classList.toggle('primary', !connectedDevice);
-  connectButton.innerHTML = `<i data-lucide="${icon}"></i><span>${label}</span>`;
+  for (const button of connectionButtons) {
+    button.classList.toggle('danger', Boolean(connectedDevice));
+    button.classList.toggle('primary', !connectedDevice);
+    button.innerHTML = `<i data-lucide="${icon}"></i><span>${label}</span>`;
+  }
   createIcons({ icons });
+}
+
+function setConnectionButtonsDisabled(disabled: boolean) {
+  connectionButtons.forEach((button) => {
+    button.disabled = disabled;
+  });
+}
+
+function cancelReconnect() {
+  if (reconnectTimer != null) {
+    window.clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  reconnectAttempt = 0;
+}
+
+function scheduleReconnect(device: BleDevice) {
+  if (reconnectTimer != null) return;
+  if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+    setSensorState('error', 'Sensor disconnected - tap Connect');
+    signalText.textContent = 'Offline';
+    return;
+  }
+
+  reconnectAttempt += 1;
+  const attempt = reconnectAttempt;
+  const delayMs = RECONNECT_BASE_DELAY_MS * attempt;
+  setSensorState('busy', `Reconnecting ${attempt}/${MAX_RECONNECT_ATTEMPTS}`);
+  signalText.textContent = 'Retry';
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = null;
+    void reconnectSensor(device);
+  }, delayMs);
+}
+
+async function reconnectSensor(device: BleDevice) {
+  if (intentionalDisconnect || connectedDevice) return;
+  setConnectionButtonsDisabled(true);
+  try {
+    await BleClient.initialize({ androidNeverForLocation: false });
+    await attachSensor(device);
+    reconnectAttempt = 0;
+    setSensorState('online', `${device.name ?? SENSOR_NAME} reconnected`);
+  } catch {
+    connectedDevice = null;
+    scheduleReconnect(device);
+  } finally {
+    setConnectionButtonsDisabled(false);
+    updateConnectionButton();
+  }
 }
 
 async function findSensorDevice(): Promise<BleDevice> {
@@ -1357,6 +1501,7 @@ function setModuleState(summary: string, detail: string) {
     <strong>${escapeHtml(summary)}</strong>
     <span>${escapeHtml(detail)}</span>
   `;
+  actionFirmwareSummary.textContent = summary;
 }
 
 function setWifiReadout(state: WifiReadoutState, summary: string, detail: string) {
@@ -1368,6 +1513,7 @@ function setWifiReadout(state: WifiReadoutState, summary: string, detail: string
       <span>${escapeHtml(detail)}</span>
     </div>
   `;
+  actionWifiSummary.textContent = state === 'connected' ? detail : summary;
 }
 
 function toHexId(value: number) {
@@ -2492,6 +2638,8 @@ async function saveDetection(detection: DetectionMessage) {
     wildcardProbe: detection.wildcard_probe ?? false,
     seedId: nearbySeed?.seed.id,
     seedLabel: nearbySeed ? cameraSeedLabel(nearbySeed.seed) : undefined,
+    seedLat: nearbySeed?.seed.lat,
+    seedLon: nearbySeed?.seed.lon,
     seedDistanceMeters: nearbySeed ? Math.round(nearbySeed.distanceMeters) : null,
   };
 
@@ -2540,6 +2688,8 @@ async function saveManualSpot() {
     wildcardProbe: false,
     seedId: nearbySeed?.seed.id,
     seedLabel: nearbySeed ? cameraSeedLabel(nearbySeed.seed) : undefined,
+    seedLat: nearbySeed?.seed.lat,
+    seedLon: nearbySeed?.seed.lon,
     seedDistanceMeters: nearbySeed ? Math.round(nearbySeed.distanceMeters) : null,
   };
 
@@ -2553,8 +2703,9 @@ async function saveManualSpot() {
 }
 
 async function checkForUpdate() {
-  const updateButton = document.querySelector<HTMLButtonElement>('#updateButton')!;
-  updateButton.disabled = true;
+  updateButtons.forEach((button) => {
+    button.disabled = true;
+  });
   setSensorState('busy', 'Checking GitHub release');
 
   try {
@@ -2605,7 +2756,9 @@ async function checkForUpdate() {
   } catch (error) {
     setSensorState('error', error instanceof Error ? error.message : 'Update check failed');
   } finally {
-    updateButton.disabled = false;
+    updateButtons.forEach((button) => {
+      button.disabled = false;
+    });
   }
 }
 
@@ -2813,7 +2966,9 @@ function maybeAutoCenterOnPosition(position: Position) {
 }
 
 function updateGpsText(position: Position) {
-  gpsText.textContent = `${Math.round(position.coords.accuracy ?? 0)}m`;
+  const accuracy = `${Math.round(position.coords.accuracy ?? 0)}m`;
+  gpsText.textContent = accuracy;
+  actionGpsSummary.textContent = accuracy;
 }
 
 async function handlePositionUpdate(position: Position) {
@@ -2840,6 +2995,7 @@ function render() {
   renderDetectorStrip();
   spotCount.textContent = String(spots.length);
   targetCount.textContent = String(visibleTargets.length);
+  actionDataSummary.textContent = `${spots.length} ${spots.length === 1 ? 'signal' : 'signals'}`;
   targetSummary.textContent =
     visibleTargets.length > 0
       ? `${visibleTargets.length} estimated ${visibleTargets.length === 1 ? 'point' : 'points'} from ${located.length} signals | ${fieldObservations.length} field checks`
@@ -2904,9 +3060,9 @@ function render() {
                   <strong>${escapeHtml(prettyLabel(target.label))}</strong>
                   <span>${target.confidence}%</span>
                 </div>
-                <p>${target.sightings} hits | ${formatMeters(target.radius)} estimate | ${formatAgo(target.lastAt)}</p>
+                <p>${target.independentPasses} ${target.independentPasses === 1 ? 'pass' : 'passes'} | ${target.sightings} hits | ${formatMeters(target.radius)} estimate</p>
                 <footer>
-                <span>${escapeHtml(formatRssi(target.bestRssi))}</span>
+                <span>${escapeHtml(target.estimateMode === 'seed-anchored' ? 'known-map anchor' : formatRssi(target.bestRssi))}</span>
                 <span>${escapeHtml(target.macs.slice(0, 2).join(', ') || 'area match')}</span>
                 </footer>
               </div>
@@ -3028,7 +3184,8 @@ function renderSpotPopup(spot: Spot) {
 function renderTargetPopup(target: SmartTarget) {
   return (
     `<strong>Likely ${escapeHtml(prettyLabel(target.label))}</strong><br>` +
-    `${target.sightings} sightings | ${target.confidence}% confidence<br>` +
+    `${target.sightings} sightings across ${target.independentPasses} passes | ${target.confidence}% confidence<br>` +
+    `${escapeHtml(target.estimateMode.replace('-', ' '))} | ` +
     `estimate radius ${formatMeters(target.radius)}<br>` +
     `${escapeHtml(formatRssi(target.bestRssi))}<br>` +
     `${escapeHtml(target.macs.slice(0, 3).join(', ') || 'area match')}`
@@ -3367,6 +3524,7 @@ async function persistFieldObservations() {
 function setSensorState(state: 'offline' | 'online' | 'busy' | 'error', text: string) {
   statusPill.dataset.state = state;
   statusText.textContent = text;
+  actionSensorSummary.textContent = text;
 }
 
 function escapeHtml(value: string) {
