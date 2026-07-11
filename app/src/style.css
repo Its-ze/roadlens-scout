@@ -98,9 +98,11 @@ p {
 }
 
 .shell {
+  height: 100%;
   min-height: 100%;
+  overflow: hidden;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   background:
     radial-gradient(circle at 18% -10%, rgba(32, 201, 151, 0.18), transparent 34%),
     linear-gradient(145deg, #111b21 0%, var(--bg) 46%, #101316 100%);
@@ -427,6 +429,7 @@ h1 {
 
 .feed {
   min-height: 0;
+  overflow: auto;
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
   border-left: 1px solid rgba(65, 85, 97, 0.68);
