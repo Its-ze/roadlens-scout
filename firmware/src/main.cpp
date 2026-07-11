@@ -12,7 +12,7 @@
 #include "signatures.h"
 
 #ifndef ROADLENS_FIRMWARE_VERSION
-#define ROADLENS_FIRMWARE_VERSION "0.1.15"
+#define ROADLENS_FIRMWARE_VERSION "0.1.16"
 #endif
 
 #ifndef ROADLENS_CHIP_FAMILY
