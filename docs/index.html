@@ -6,7 +6,7 @@
     <title>RoadLens Scout</title>
     <meta
       name="description"
-      content="RoadLens Scout ESP32 flasher and Android APK download."
+      content="RoadLens Scout dual-ESP32 sensor app, web flasher, and Android APK download."
     />
     <link rel="icon" href="assets/roadlens-mark.svg" type="image/svg+xml" />
     <script
@@ -409,7 +409,8 @@
             <p class="muted">
               Auto-detected ESP32-family sensor firmware, Android APK, checksums, and release metadata in one Pages-ready package.
               This firmware advertises over BLE first, then starts passive detection after the phone connects.
-              The Android app can also refresh detection signatures, run a phone-side BLE sweep, and update OTA-capable sensors over Wi-Fi.
+              The Android app can pair two uniquely named sensors at once, combine their detections with per-sensor attribution,
+              refresh detection signatures, run a phone-side BLE sweep, and update OTA-capable sensors over Wi-Fi.
             </p>
 
             <div class="actions">
@@ -432,12 +433,12 @@
                 <span>Firmware scans channels 1-11, reports counters, detects SSID/probe signals, and can use app-synced signature feeds.</span>
               </div>
               <div>
-                <strong>Phone USB setup</strong>
-                <span>The APK Setup tab detects a plugged-in ESP32 and opens the matching RoadLens flasher.</span>
+                <strong>Dual sensor fleet</strong>
+                <span>Pair two independently managed ESP32 sensors and see live 0/2, 1/2, or 2/2 connection status.</span>
               </div>
               <div>
-                <strong>Sensor OTA</strong>
-                <span>After one USB/web flash, the app can detect and update outdated sensor firmware over Wi-Fi.</span>
+                <strong>Phone flash + OTA</strong>
+                <span>The Setup tab detects a USB-connected ESP32; after setup, the app can update OTA-capable sensors over Wi-Fi.</span>
               </div>
               <div>
                 <strong>Auto-refresh signatures</strong>
