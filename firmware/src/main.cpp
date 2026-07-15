@@ -678,12 +678,12 @@ static void drainBleNotifications(uint32_t nowMs) {
     }
     currentBleMessageOffset = 0;
     currentBleMessageActive = true;
-    notifyCharacteristic->setValue(currentBleMessage.bytes, currentBleMessage.length);
   }
 
   const size_t remaining = currentBleMessage.length - currentBleMessageOffset;
   const size_t chunkLength = min(BLE_NOTIFY_CHUNK_BYTES, remaining);
-  notifyCharacteristic->notify(currentBleMessage.bytes + currentBleMessageOffset, chunkLength);
+  notifyCharacteristic->setValue(currentBleMessage.bytes + currentBleMessageOffset, chunkLength);
+  notifyCharacteristic->notify();
   currentBleMessageOffset += chunkLength;
   lastBleNotifyMs = nowMs;
 
@@ -773,7 +773,7 @@ static void emitDetection(const DetectionEvent &event) {
 }
 
 class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer *) override {
+  void onConnect(NimBLEServer *, NimBLEConnInfo &) override {
     bleConnected = true;
     if (bleMessageQueue != nullptr) {
       xQueueReset(bleMessageQueue);
@@ -784,7 +784,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     snifferStartAtMs = 0;
   }
 
-  void onDisconnect(NimBLEServer *) override {
+  void onDisconnect(NimBLEServer *, NimBLEConnInfo &, int) override {
     bleConnected = false;
     if (bleMessageQueue != nullptr) {
       xQueueReset(bleMessageQueue);
@@ -794,7 +794,6 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     snifferStartRequested = false;
     snifferStartAtMs = 0;
     stopSniffer();
-    NimBLEDevice::startAdvertising();
   }
 };
 
@@ -1134,7 +1133,7 @@ ota_cleanup:
 }
 
 class CommandCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic *characteristic) override {
+  void onWrite(NimBLECharacteristic *characteristic, NimBLEConnInfo &) override {
     std::string value = characteristic->getValue();
     if (value.empty()) {
       return;
@@ -1186,6 +1185,7 @@ static void setupBle() {
 
   NimBLEServer *server = NimBLEDevice::createServer();
   server->setCallbacks(new ServerCallbacks());
+  server->advertiseOnDisconnect(true);
 
   NimBLEService *service = server->createService(SERVICE_UUID);
   notifyCharacteristic = service->createCharacteristic(
@@ -1196,12 +1196,10 @@ static void setupBle() {
       COMMAND_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
   commandCharacteristic->setCallbacks(new CommandCallbacks());
 
-  service->start();
-
   NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
   advertising->addServiceUUID(SERVICE_UUID);
   advertising->setName(deviceName);
-  advertising->setScanResponse(true);
+  advertising->enableScanResponse(true);
   advertising->start();
 }
 
