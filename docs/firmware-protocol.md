@@ -8,9 +8,9 @@ only after the phone has connected, subscribed to notifications, and sent
 `start-scan`. On disconnect, Wi-Fi monitor mode is stopped and BLE advertising
 restarts.
 
-Outgoing JSON records are queued and sent as paced 180-byte BLE notifications.
-The app buffers those chunks until the newline terminator before parsing the
-complete record.
+Outgoing JSON records are queued and sent as paced notifications capped at 220
+bytes. Firmware `0.1.18` uses compact field names so normal records fit in one
+notification; the app accepts both compact and legacy verbose records.
 
 The `ping` command returns the compact `{"type":"pong"}` record and can be used
 to verify notification delivery before starting the Wi-Fi monitor.
@@ -45,25 +45,27 @@ The notify characteristic emits newline-delimited JSON. The same JSON is printed
 Detection example:
 
 ```json
-{"type":"detection","source":"wifi","detector":"RoadLens-57E298","mac":"70:c9:4e:00:00:00","ssid":"Flock-ABC123","role":"ssid","label":"flock-wifi-ssid","rssi":-71,"channel":6,"frame_type":0,"frame_subtype":4,"wildcard_probe":false,"confidence":88,"uptime_ms":123456}
+{"t":"d","m":"70:c9:4e:00:00:00","s":"Flock-ABC123","r":"ssid","l":"flock-wifi-ssid","p":-71,"c":6,"ft":0,"fs":4,"w":0,"q":88,"u":123456}
 ```
 
-Status example:
+Status is emitted as a core record followed by a metrics record. The app merges
+both records for the corresponding sensor session:
 
 ```json
-{"type":"status","device":"RoadLens-57E298","reason":"heartbeat","uptime_ms":123456,"channel":6,"detections":3,"signature_count":46,"ble_connected":true,"sniffer_active":true,"frames_seen":1800,"mgmt_frames":700,"data_frames":1100,"wildcard_probes":8,"candidate_frames":3,"queue_drops":0,"firmware_version":"0.1.18","chip_family":"ESP32","ota_supported":true,"ota_in_progress":false,"ota_version":"","signature_version":"2026.06.28.003ddaa1","signature_source":"synced","signature_sync_supported":true}
+{"t":"s","d":"RoadLens-57E298","r":"heartbeat","u":123456,"c":6,"b":1,"a":1,"v":"0.1.18","h":"ESP32","o":1,"i":0,"ov":"","g":46,"sv":"2026.06.28.003ddaa1","ss":"synced","sy":1}
+{"t":"m","n":3,"f":1800,"m":700,"x":1100,"w":8,"k":3,"q":0}
 ```
 
 OTA status example:
 
 ```json
-{"type":"ota","state":"download","detail":"Downloading firmware","progress":50,"version":"0.1.18","chip_family":"ESP32"}
+{"t":"o","s":"download","d":"Downloading firmware","p":50,"v":"0.1.18","c":"ESP32"}
 ```
 
 Signature status example:
 
 ```json
-{"type":"signatures","state":"active","detail":"Signature set updated","count":46,"version":"2026.06.28.003ddaa1"}
+{"t":"g","s":"active","d":"Signature set updated","n":46,"v":"2026.06.28.003ddaa1"}
 ```
 
 Commands:

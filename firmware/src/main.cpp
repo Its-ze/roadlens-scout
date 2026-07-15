@@ -1186,7 +1186,9 @@ static void setupBle() {
 
   NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
   advertising->addServiceUUID(SERVICE_UUID);
-  advertising->setName(deviceName);
+  NimBLEAdvertisementData scanResponse;
+  scanResponse.setName(deviceName);
+  advertising->setScanResponseData(scanResponse);
   advertising->enableScanResponse(true);
   advertising->start();
 }

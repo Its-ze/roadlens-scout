@@ -69,6 +69,9 @@ Flock-style SSIDs such as `Flock-*` and battery/module names when they appear in
 management frames. The app can sync newer signature feeds into v0.1.8+ sensors
 over BLE, and the ESP32 stores the synced feed locally.
 
+Firmware `0.1.18` uses NimBLE-Arduino 2.5 and compact, single-notification BLE
+records to keep both sensor links stable while Wi-Fi monitoring is active.
+
 For a specific USB-upload target:
 
 ```powershell
