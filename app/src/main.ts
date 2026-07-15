@@ -1211,16 +1211,16 @@ function refreshSensorFleetState() {
   ).length;
 
   if (connecting) {
-    setSensorState('busy', `${connected.length}/${MAX_SENSOR_CONNECTIONS} linked | ${connecting.detail}`);
+    setSensorState('busy', `${connected.length}/${MAX_SENSOR_CONNECTIONS} | ${connecting.detail}`);
   } else if (connected.length > 0) {
     const detail =
       scanning === connected.length
-        ? `${connected.length}/${MAX_SENSOR_CONNECTIONS} sensors scanning`
+        ? `${connected.length}/${MAX_SENSOR_CONNECTIONS} scanning`
         : `${connected.length}/${MAX_SENSOR_CONNECTIONS} linked${scanning ? ` | ${scanning} scanning` : ''}`;
     setSensorState('online', detail);
   } else {
     const failed = sensorSessions.find((session) => session.detail.startsWith('Reconnect failed'));
-    setSensorState(failed ? 'error' : 'offline', failed?.detail ?? '0/2 sensors paired');
+    setSensorState(failed ? 'error' : 'offline', failed?.detail ?? '0/2 paired');
   }
 
   signalText.textContent = `${connected.length}/${MAX_SENSOR_CONNECTIONS}`;

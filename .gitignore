@@ -13,3 +13,4 @@ app/.smart-target-test/
 app/vite-preview*.log
 .tooling/
 backups/
+output/playwright/
