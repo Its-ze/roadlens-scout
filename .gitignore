@@ -12,3 +12,4 @@ app/.vite*.pid
 app/.smart-target-test/
 app/vite-preview*.log
 .tooling/
+backups/
