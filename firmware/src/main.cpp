@@ -12,7 +12,7 @@
 #include "signatures.h"
 
 #ifndef ROADLENS_FIRMWARE_VERSION
-#define ROADLENS_FIRMWARE_VERSION "0.1.16"
+#define ROADLENS_FIRMWARE_VERSION "0.1.17"
 #endif
 
 #ifndef ROADLENS_CHIP_FAMILY
@@ -23,7 +23,7 @@
 #define ROADLENS_OTA_URL "https://its-ze.github.io/roadlens-scout/flasher/firmware/esp32/firmware.bin"
 #endif
 
-static constexpr char DEVICE_NAME[] = "RoadLensESP32";
+static char deviceName[24] = "RoadLens";
 static constexpr char SERVICE_UUID[] = "7d1d0001-52a1-4b81-9fd2-fd7ec3f50100";
 static constexpr char NOTIFY_UUID[] = "7d1d0002-52a1-4b81-9fd2-fd7ec3f50100";
 static constexpr char COMMAND_UUID[] = "7d1d0003-52a1-4b81-9fd2-fd7ec3f50100";
@@ -682,7 +682,7 @@ static void emitStatus(const char *reason) {
            "\"ota_in_progress\":%s,\"ota_version\":\"%s\","
            "\"signature_version\":\"%s\",\"signature_source\":\"%s\","
            "\"signature_sync_supported\":true}\n",
-           DEVICE_NAME, reason, static_cast<unsigned long>(millis()),
+           deviceName, reason, static_cast<unsigned long>(millis()),
            CHANNELS[channelIndex], static_cast<unsigned long>(detectionCount),
            static_cast<unsigned>(activeSignatureCount()),
            bleConnected ? "true" : "false",
@@ -712,7 +712,7 @@ static void emitDetection(const DetectionEvent &event) {
            "\"rssi\":%d,\"channel\":%u,\"frame_type\":%u,"
            "\"frame_subtype\":%u,\"wildcard_probe\":%s,"
            "\"confidence\":%u,\"uptime_ms\":%lu}\n",
-           DEVICE_NAME, event.mac, escapedSsid.c_str(), event.role,
+           deviceName, event.mac, escapedSsid.c_str(), event.role,
            escapedLabel.c_str(), event.rssi,
            event.channel, event.frameType, event.frameSubtype,
            event.wildcardProbe ? "true" : "false", event.confidence,
@@ -1120,7 +1120,9 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
 };
 
 static void setupBle() {
-  NimBLEDevice::init(DEVICE_NAME);
+  const uint32_t shortId = static_cast<uint32_t>(ESP.getEfuseMac() & 0xFFFFFFULL);
+  snprintf(deviceName, sizeof(deviceName), "RoadLens-%06lX", static_cast<unsigned long>(shortId));
+  NimBLEDevice::init(deviceName);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
   NimBLEServer *server = NimBLEDevice::createServer();
@@ -1139,7 +1141,7 @@ static void setupBle() {
 
   NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
   advertising->addServiceUUID(SERVICE_UUID);
-  advertising->setName(DEVICE_NAME);
+  advertising->setName(deviceName);
   advertising->setScanResponse(true);
   advertising->start();
 }

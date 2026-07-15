@@ -505,6 +505,75 @@ h1 {
   gap: 12px;
 }
 
+.setup-subtitle {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(65, 85, 97, 0.46);
+}
+
+.sensor-slot-list {
+  display: grid;
+  gap: 8px;
+}
+
+.sensor-slot {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(65, 85, 97, 0.64);
+  border-radius: 8px;
+  background: rgba(17, 24, 32, 0.72);
+  padding: 9px;
+}
+
+.sensor-slot[data-state="scanning"] {
+  border-color: rgba(124, 248, 206, 0.48);
+  background: rgba(24, 48, 46, 0.72);
+}
+
+.sensor-slot-index {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--mint-2);
+  background: rgba(32, 201, 151, 0.14);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.sensor-slot-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.sensor-slot-copy strong,
+.sensor-slot-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sensor-slot-copy strong {
+  font-size: 13px;
+}
+
+.sensor-slot-copy span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.sensor-slot button {
+  min-width: 96px;
+  min-height: 38px;
+  padding-inline: 10px;
+  font-size: 12px;
+}
+
 .setup-card {
   display: grid;
   gap: 10px;
@@ -1081,6 +1150,7 @@ h1 {
   }
 
   .shell[data-mobile-tab="setup"] .setup-card,
+  .shell[data-mobile-tab="setup"] .sensor-slot-list,
   .shell[data-mobile-tab="setup"] .module-card {
     gap: 8px;
   }
@@ -1329,6 +1399,10 @@ h1 {
   .feed-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .shell[data-mobile-tab="setup"] .sensor-slot {
+    padding: 7px;
   }
 
   .connection-panel {

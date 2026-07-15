@@ -58,8 +58,8 @@ USB upload:
 
 Replace `COM15` with the live ESP32 port.
 
-After flashing, reset or power-cycle the board and look for the BLE device name
-`RoadLensESP32` from the Android app. Firmware `0.1.16` keeps Wi-Fi monitor mode
+After flashing, reset or power-cycle the board and look for a unique BLE device
+name such as `RoadLens-57E298` from the Android app. Firmware `0.1.17` keeps Wi-Fi monitor mode
 off until the phone has connected and subscribed to notifications, then the app
 sends `start-scan` to begin passive detection after the BLE link settles. It
 scans 2.4 GHz channels 1-11,
@@ -105,8 +105,16 @@ Then apply the printed environment variables in the same shell and rerun the APK
 The Android app has a `Setup` tab for a phone-plugged ESP32. It detects USB-OTG
 serial devices such as Espressif native USB, CP210x, CH34x, and FTDI bridges,
 requests Android USB permission, and flashes the bundled RoadLens firmware from
-inside the APK. After flashing, use `Connect` to link to `RoadLensESP32`; while
-linked, the same button becomes `Disconnect`.
+inside the APK. After flashing, use `Pair sensor` to connect the first board,
+then `Add 2nd` to connect another. The Sensor Fleet panel shows both links and
+provides a separate Disconnect button for each board. With both connected, the
+map combines their detections and frame counters while retaining which sensor
+reported each hit.
+
+Two sensors carried together improve radio coverage, but do not create two GPS
+vantage points. RoadLens stores both readings while counting simultaneous hits
+from the same phone location as one independent pass; a likely point still
+requires detections from a later time or meaningfully different position.
 
 The `Setup` tab also has `BLE Sweep`. It runs a short phone-side BLE scan for
 known Flock-style BLE names, manufacturer IDs, MAC prefixes, and Raven service
@@ -133,7 +141,7 @@ operator can review and attach/share the report intentionally.
 
 ### Sensor OTA Updates
 
-Firmware `0.1.16` supports in-app ESP32 firmware updates after the board has been
+Firmware `0.1.17` supports in-app ESP32 firmware updates after the board has been
 flashed once by USB or the web flasher. When the app connects to a sensor, it
 reads the sensor firmware version and chip family, checks RoadLens Pages
 metadata, and prompts if a newer matching firmware build is available.

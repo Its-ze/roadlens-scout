@@ -11,7 +11,7 @@ import type { Position } from '@capacitor/geolocation';
 import { Share } from '@capacitor/share';
 import L from 'leaflet';
 import { createIcons, icons } from 'lucide';
-import { buildSmartTargets, hasCoordinates, TARGET_MIN_SIGHTINGS } from './smartTargets';
+import { buildSmartTargets, hasCoordinates, TARGET_MIN_INDEPENDENT_PASSES } from './smartTargets';
 import type { SmartTarget, Spot } from './smartTargets';
 
 const SERVICE_UUID = '7d1d0001-52a1-4b81-9fd2-fd7ec3f50100';
@@ -461,7 +461,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </div>
 
       <div class="actions">
-        <button id="connectButton" class="primary"><i data-lucide="bluetooth"></i><span>Connect</span></button>
+        <button id="connectButton" class="primary"><i data-lucide="bluetooth"></i><span>Pair sensor</span></button>
         <button id="manualButton"><i data-lucide="map-pin-plus"></i><span>Spot</span></button>
         <button id="updateButton"><i data-lucide="cloud-download"></i><span>Update</span></button>
         <button id="exportButton"><i data-lucide="download"></i><span>Export</span></button>
@@ -550,7 +550,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
             <strong id="actionSensorSummary">Sensor offline</strong>
           </div>
           <button id="mobileConnectButton" class="primary">
-            <i data-lucide="bluetooth"></i><span>Connect</span>
+            <i data-lucide="bluetooth"></i><span>Pair sensor</span>
           </button>
         </div>
 
@@ -608,7 +608,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <div class="module-card">
             <div id="moduleStatus" class="module-status">
               <strong>Sensor firmware</strong>
-              <span>Connect RoadLensESP32</span>
+              <span>Connect a RoadLens sensor</span>
             </div>
             <div id="wifiReadout" class="wifi-readout" data-state="unknown">
               <span class="wifi-readout-dot"></span>
@@ -799,7 +799,7 @@ if (Capacitor.isNativePlatform()) {
 
 initMap();
 renderUsbSetup();
-renderSensorFleet();
+refreshSensorFleetState();
 render();
 void startLocationWatch();
 void refreshWifiReadout({ quiet: true });
@@ -1229,8 +1229,9 @@ function refreshSensorFleetState() {
 }
 
 function setConnectionButtonsDisabled(disabled: boolean) {
+  const shouldDisable = disabled || sensorSessions.some((session) => session.connecting);
   connectionButtons.forEach((button) => {
-    button.disabled = disabled;
+    button.disabled = shouldDisable;
   });
   renderSensorFleet();
 }
@@ -1599,8 +1600,8 @@ async function flashBundledSensorFirmware(device: RoadLensUsbDevice | null) {
   setUsbState('Preparing native flash', device.label);
 
   try {
-    if (connectedDevice) {
-      await disconnectSensor();
+    if (connectedSensorSessions().length) {
+      await disconnectAllSensors();
     }
 
     const result = await RoadLensUsb.flashBundledFirmware({
@@ -2610,17 +2611,21 @@ function clampNumber(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-async function maybeSyncSensorSignatures(status: SensorStatus, options: { force?: boolean } = {}) {
+async function maybeSyncSensorSignatures(
+  session: SensorSession,
+  status: SensorStatus,
+  options: { force?: boolean } = {},
+) {
   if (
-    signatureSyncBusy ||
-    !connectedDevice ||
+    session.signatureSyncBusy ||
+    !session.device ||
     !status.signature_sync_supported ||
     status.ota_in_progress
   ) {
     return;
   }
 
-  if (!options.force && (Date.now() < automaticSignatureSyncPausedUntil || status.sniffer_active)) {
+  if (!options.force && (Date.now() < session.automaticSignatureSyncPausedUntil || status.sniffer_active)) {
     return;
   }
 
@@ -2631,40 +2636,40 @@ async function maybeSyncSensorSignatures(status: SensorStatus, options: { force?
     return;
   }
 
-  const syncKey = `${connectedDevice.deviceId}:${targetVersion}:${targetCount}`;
-  if (signatureSyncedForKey === syncKey) {
+  const syncKey = `${session.device.deviceId}:${targetVersion}:${targetCount}`;
+  if (session.signatureSyncedForKey === syncKey) {
     return;
   }
 
-  signatureSyncBusy = true;
+  session.signatureSyncBusy = true;
   try {
-    await syncSensorSignatures(feed, targetVersion);
-    signatureSyncedForKey = syncKey;
+    await syncSensorSignatures(session, feed, targetVersion);
+    session.signatureSyncedForKey = syncKey;
   } catch (error) {
     setModuleState('Signature sync failed', error instanceof Error ? error.message : 'Using sensor list');
   } finally {
-    signatureSyncBusy = false;
+    session.signatureSyncBusy = false;
   }
 }
 
-async function syncSensorSignatures(feed: SignatureFeed, targetVersion: string) {
+async function syncSensorSignatures(session: SensorSession, feed: SignatureFeed, targetVersion: string) {
   if (feed.wifiPrefixes.length > MAX_SENSOR_SIGNATURE_PREFIXES) {
     throw new Error(`Signature feed has ${feed.wifiPrefixes.length} prefixes; firmware limit is ${MAX_SENSOR_SIGNATURE_PREFIXES}`);
   }
 
-  setModuleState('Syncing signatures', `${feed.wifiPrefixes.length} Wi-Fi prefixes`);
-  await sendSensorStagedCommand('sc');
-  await sendSensorStagedCommand(`sv:${targetVersion}`);
+  setModuleState(`Syncing ${sensorSlotLabel(session)}`, `${feed.wifiPrefixes.length} Wi-Fi prefixes`);
+  await sendSensorStagedCommand(session, 'sc');
+  await sendSensorStagedCommand(session, `sv:${targetVersion}`);
   for (const item of feed.wifiPrefixes) {
     const compactPrefix = item.prefix.replace(/:/g, '');
     const allowLocal = item.allowLocalAdministered || item.wildcardProbe || isLocalAdministeredPrefix(item.prefix);
-    await sendSensorStagedCommand(`sp:${compactPrefix}:${allowLocal ? 1 : 0}`);
+    await sendSensorStagedCommand(session, `sp:${compactPrefix}:${allowLocal ? 1 : 0}`);
   }
-  await sendSensorStagedCommand('sf');
+  await sendSensorStagedCommand(session, 'sf');
 }
 
-async function sendSensorStagedCommand(command: string) {
-  await sendCommand(command, { preferResponse: true });
+async function sendSensorStagedCommand(session: SensorSession, command: string) {
+  await sendCommand(command, { preferResponse: true }, session);
   await delay(SIGNATURE_COMMAND_DELAY_MS);
 }
 
@@ -2841,7 +2846,7 @@ function normalizeMac(value: string | undefined) {
     ?.join(':') ?? null;
 }
 
-async function saveDetection(detection: DetectionMessage) {
+async function saveDetection(detection: DetectionMessage, session?: SensorSession) {
   const position = await getBestPosition();
   const coords = position?.coords;
   const nearbySeed = coords
@@ -2855,6 +2860,8 @@ async function saveDetection(detection: DetectionMessage) {
     accuracy: coords?.accuracy ?? null,
     source: detection.source ?? 'sensor',
     detector: detection.detector ?? SENSOR_NAME,
+    sensorId: session?.device?.deviceId,
+    sensorLabel: session ? sensorSlotLabel(session) : undefined,
     label: detection.label ?? 'alpr-signal',
     mac: detection.mac ?? 'unknown',
     ssid: detection.ssid,
@@ -2877,7 +2884,7 @@ async function saveDetection(detection: DetectionMessage) {
   const focusTarget = smartTargets.find((target) => target.spotIds.includes(spot.id));
   if (focusTarget) {
     mapFocusText.textContent =
-      focusTarget.sightings >= TARGET_MIN_SIGHTINGS
+      focusTarget.independentPasses >= TARGET_MIN_INDEPENDENT_PASSES
         ? `Estimated point refined (${focusTarget.sightings} hits)`
         : 'New signal saved';
     setSmartMapView(focusTarget.lat, focusTarget.lon, Math.max(map.getZoom(), 17), { animate: true });
@@ -3147,7 +3154,7 @@ function chooseLocationZoom(
 function findNearestVisibleTarget(lat: number, lon: number, maxMeters: number) {
   let best: { target: SmartTarget; distanceMeters: number } | null = null;
   for (const target of smartTargets) {
-    if (target.sightings < TARGET_MIN_SIGHTINGS) {
+    if (target.independentPasses < TARGET_MIN_INDEPENDENT_PASSES) {
       continue;
     }
     const distance = geoDistanceMeters(lat, lon, target.lat, target.lon);
@@ -3216,7 +3223,9 @@ async function handlePositionUpdate(position: Position) {
 
 function render() {
   smartTargets = buildSmartTargets(spots);
-  const visibleTargets = smartTargets.filter((target) => target.sightings >= TARGET_MIN_SIGHTINGS);
+  const visibleTargets = smartTargets.filter(
+    (target) => target.independentPasses >= TARGET_MIN_INDEPENDENT_PASSES,
+  );
   const located = spots.filter(hasCoordinates);
 
   renderDetectorStrip();
@@ -3311,7 +3320,7 @@ function render() {
               </div>
               <p>${escapeHtml(spot.mac)} ${spot.channel ? `ch${spot.channel}` : ''} ${
                 spot.rssi != null ? `${spot.rssi} dBm` : ''
-              }${spot.ssid ? ` ${escapeHtml(spot.ssid)}` : ''}</p>
+              }${spot.ssid ? ` ${escapeHtml(spot.ssid)}` : ''}${spot.sensorLabel ? ` | ${escapeHtml(spot.sensorLabel)}` : ''}</p>
               <footer>
                 <span>${spot.confidence}%</span>
                 <span>${
@@ -3402,6 +3411,7 @@ function renderSpotPopup(spot: Spot) {
     `<strong>${escapeHtml(prettyLabel(spot.label))}</strong><br>` +
     `${escapeHtml(spot.mac)} ${spot.channel ? `ch${spot.channel}` : ''}<br>` +
     `${spot.ssid ? `SSID ${escapeHtml(spot.ssid)}<br>` : ''}` +
+    `${spot.sensorLabel ? `${escapeHtml(spot.sensorLabel)}<br>` : ''}` +
     `${new Date(spot.createdAt).toLocaleString()}<br>` +
     `confidence ${spot.confidence}% ${spot.rssi != null ? `| ${spot.rssi} dBm` : ''}` +
     `${spot.seedLabel ? `<br>near ${escapeHtml(spot.seedLabel)} ${spot.seedDistanceMeters != null ? `(${formatMeters(spot.seedDistanceMeters)})` : ''}` : ''}`
@@ -3463,7 +3473,9 @@ function formatAgo(iso: string) {
 
 async function exportGeoJson() {
   const geojson = buildFieldReportGeoJson();
-  const targets = buildSmartTargets(spots).filter((target) => target.sightings >= TARGET_MIN_SIGHTINGS);
+  const targets = buildSmartTargets(spots).filter(
+    (target) => target.independentPasses >= TARGET_MIN_INDEPENDENT_PASSES,
+  );
   const sightingCount = spots.filter(hasCoordinates).length;
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const path = `roadlens/roadlens-scout-map-${stamp}.geojson`;
@@ -3495,7 +3507,9 @@ async function shareFieldReport() {
     recursive: true,
   });
 
-  const targets = buildSmartTargets(spots).filter((target) => target.sightings >= TARGET_MIN_SIGHTINGS);
+  const targets = buildSmartTargets(spots).filter(
+    (target) => target.independentPasses >= TARGET_MIN_INDEPENDENT_PASSES,
+  );
   const referencedSeeds = referencedCameraSeeds();
   const reportText =
     `${APP_NAME} field report\n\n` +
@@ -3525,7 +3539,9 @@ async function shareFieldReport() {
 }
 
 function buildFieldReportGeoJson() {
-  const targets = buildSmartTargets(spots).filter((target) => target.sightings >= TARGET_MIN_SIGHTINGS);
+  const targets = buildSmartTargets(spots).filter(
+    (target) => target.independentPasses >= TARGET_MIN_INDEPENDENT_PASSES,
+  );
   const sightingFeatures = spots.filter(hasCoordinates).map((spot) => ({
     type: 'Feature',
     geometry: {
@@ -3539,6 +3555,8 @@ function buildFieldReportGeoJson() {
       accuracy: spot.accuracy,
       source: spot.source,
       detector: spot.detector,
+      sensorId: spot.sensorId,
+      sensorLabel: spot.sensorLabel,
       label: spot.label,
       mac: spot.mac,
       ssid: spot.ssid,
@@ -3591,6 +3609,7 @@ function buildFieldReportGeoJson() {
       accuracy: observation.accuracy,
       seedDistanceMeters: observation.distanceMeters,
       sensorConnected: observation.sensorConnected,
+      sensorCount: observation.sensorCount,
       firmwareVersion: observation.firmwareVersion,
       signalCount: observation.signalCount,
     },

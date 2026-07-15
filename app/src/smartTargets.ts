@@ -1,4 +1,5 @@
-export const TARGET_MIN_SIGHTINGS = 2;
+export const TARGET_MIN_INDEPENDENT_PASSES = 2;
+export const TARGET_MIN_SIGHTINGS = TARGET_MIN_INDEPENDENT_PASSES;
 
 const AREA_MATCH_RADIUS_METERS = 120;
 const SAME_DEVICE_RADIUS_METERS = 320;
@@ -11,6 +12,8 @@ export type Spot = {
   accuracy: number | null;
   source: string;
   detector: string;
+  sensorId?: string;
+  sensorLabel?: string;
   label: string;
   mac: string;
   ssid?: string;

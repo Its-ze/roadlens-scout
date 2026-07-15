@@ -86,10 +86,11 @@ const unknownAreaTargets = buildSmartTargets([
 assert.equal(unknownAreaTargets[0].sightings, 2, 'nearby same-label area sightings should merge');
 
 const duplicateTargets = buildSmartTargets([
-  spot({ id: 'duplicate-a', createdAt: '2026-06-23T04:00:00.000Z' }),
-  spot({ id: 'duplicate-b', createdAt: '2026-06-23T04:00:10.000Z', lat: 39.00001 }),
+  spot({ id: 'duplicate-a', sensorLabel: 'Sensor 1', createdAt: '2026-06-23T04:00:00.000Z' }),
+  spot({ id: 'duplicate-b', sensorLabel: 'Sensor 2', createdAt: '2026-06-23T04:00:10.000Z', lat: 39.00001 }),
 ]);
-assert.equal(duplicateTargets[0].independentPasses, 1, 'rapid samples from one position are one pass');
+assert.equal(duplicateTargets[0].sightings, 2, 'both sensors should retain their readings');
+assert.equal(duplicateTargets[0].independentPasses, 1, 'dual-sensor hits from one position are one pass');
 assert.ok(duplicateTargets[0].confidence < merged.confidence, 'duplicate samples should not inflate confidence');
 
 const seedTargets = buildSmartTargets([
