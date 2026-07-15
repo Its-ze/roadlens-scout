@@ -34,7 +34,8 @@ static constexpr uint32_t DUPLICATE_SUPPRESS_MS = 15000;
 static constexpr uint32_t STATUS_INTERVAL_MS = 5000;
 static constexpr size_t BLE_NOTIFY_CHUNK_BYTES = 220;
 static constexpr uint32_t BLE_NOTIFY_INTERVAL_MS = 100;
-static constexpr size_t BLE_MESSAGE_MAX_BYTES = 900;
+static constexpr size_t BLE_MESSAGE_MAX_BYTES = 256;
+static constexpr UBaseType_t BLE_MESSAGE_QUEUE_LENGTH = 24;
 static constexpr uint32_t OTA_WIFI_TIMEOUT_MS = 25000;
 static constexpr uint32_t OTA_HTTP_IDLE_TIMEOUT_MS = 45000;
 static constexpr size_t MAX_DYNAMIC_SIGNATURES = 96;
@@ -658,7 +659,11 @@ static void emitLine(const String &line) {
   BleMessage message = {};
   message.length = static_cast<uint16_t>(line.length());
   memcpy(message.bytes, line.c_str(), message.length);
-  xQueueSend(bleMessageQueue, &message, 0);
+  if (xQueueSend(bleMessageQueue, &message, 0) != pdTRUE) {
+    BleMessage discarded = {};
+    xQueueReceive(bleMessageQueue, &discarded, 0);
+    xQueueSend(bleMessageQueue, &message, 0);
+  }
 }
 
 static void drainBleNotifications(uint32_t nowMs) {
@@ -1233,7 +1238,7 @@ void setup() {
 
   loadDynamicSignatures();
   detectionQueue = xQueueCreate(24, sizeof(DetectionEvent));
-  bleMessageQueue = xQueueCreate(8, sizeof(BleMessage));
+  bleMessageQueue = xQueueCreate(BLE_MESSAGE_QUEUE_LENGTH, sizeof(BleMessage));
   setupBle();
   emitStatus("boot");
 }
