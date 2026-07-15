@@ -33,6 +33,8 @@ static constexpr uint32_t CHANNEL_DWELL_MS = 180;
 static constexpr uint32_t DUPLICATE_SUPPRESS_MS = 15000;
 static constexpr uint32_t STATUS_INTERVAL_MS = 5000;
 static constexpr size_t BLE_NOTIFY_CHUNK_BYTES = 180;
+static constexpr uint32_t BLE_NOTIFY_INTERVAL_MS = 20;
+static constexpr size_t BLE_MESSAGE_MAX_BYTES = 900;
 static constexpr uint32_t OTA_WIFI_TIMEOUT_MS = 25000;
 static constexpr uint32_t OTA_HTTP_IDLE_TIMEOUT_MS = 45000;
 static constexpr size_t MAX_DYNAMIC_SIGNATURES = 96;
@@ -59,8 +61,18 @@ struct SeenEntry {
   bool used;
 };
 
+struct BleMessage {
+  uint16_t length;
+  uint8_t bytes[BLE_MESSAGE_MAX_BYTES];
+};
+
 static QueueHandle_t detectionQueue = nullptr;
+static QueueHandle_t bleMessageQueue = nullptr;
 static NimBLECharacteristic *notifyCharacteristic = nullptr;
+static BleMessage currentBleMessage = {};
+static size_t currentBleMessageOffset = 0;
+static bool currentBleMessageActive = false;
+static uint32_t lastBleNotifyMs = 0;
 static bool bleConnected = false;
 static bool wifiSnifferActive = false;
 static bool snifferStartRequested = false;
@@ -638,14 +650,46 @@ static void snifferCallback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
 static void emitLine(const String &line) {
   Serial.print(line);
-  if (bleConnected && notifyCharacteristic != nullptr) {
-    const uint8_t *bytes = reinterpret_cast<const uint8_t *>(line.c_str());
-    const size_t length = line.length();
-    notifyCharacteristic->setValue(bytes, length);
-    for (size_t offset = 0; offset < length; offset += BLE_NOTIFY_CHUNK_BYTES) {
-      const size_t chunkLength = min(BLE_NOTIFY_CHUNK_BYTES, length - offset);
-      notifyCharacteristic->notify(bytes + offset, chunkLength);
+  if (!bleConnected || bleMessageQueue == nullptr || line.isEmpty() ||
+      line.length() > BLE_MESSAGE_MAX_BYTES) {
+    return;
+  }
+
+  BleMessage message = {};
+  message.length = static_cast<uint16_t>(line.length());
+  memcpy(message.bytes, line.c_str(), message.length);
+  xQueueSend(bleMessageQueue, &message, 0);
+}
+
+static void drainBleNotifications(uint32_t nowMs) {
+  if (!bleConnected || notifyCharacteristic == nullptr || bleMessageQueue == nullptr) {
+    currentBleMessageActive = false;
+    currentBleMessageOffset = 0;
+    return;
+  }
+
+  if (nowMs - lastBleNotifyMs < BLE_NOTIFY_INTERVAL_MS) {
+    return;
+  }
+
+  if (!currentBleMessageActive) {
+    if (xQueueReceive(bleMessageQueue, &currentBleMessage, 0) != pdTRUE) {
+      return;
     }
+    currentBleMessageOffset = 0;
+    currentBleMessageActive = true;
+    notifyCharacteristic->setValue(currentBleMessage.bytes, currentBleMessage.length);
+  }
+
+  const size_t remaining = currentBleMessage.length - currentBleMessageOffset;
+  const size_t chunkLength = min(BLE_NOTIFY_CHUNK_BYTES, remaining);
+  notifyCharacteristic->notify(currentBleMessage.bytes + currentBleMessageOffset, chunkLength);
+  currentBleMessageOffset += chunkLength;
+  lastBleNotifyMs = nowMs;
+
+  if (currentBleMessageOffset >= currentBleMessage.length) {
+    currentBleMessageActive = false;
+    currentBleMessageOffset = 0;
   }
 }
 
@@ -731,12 +775,22 @@ static void emitDetection(const DetectionEvent &event) {
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer *) override {
     bleConnected = true;
+    if (bleMessageQueue != nullptr) {
+      xQueueReset(bleMessageQueue);
+    }
+    currentBleMessageActive = false;
+    currentBleMessageOffset = 0;
     snifferStartRequested = false;
     snifferStartAtMs = 0;
   }
 
   void onDisconnect(NimBLEServer *) override {
     bleConnected = false;
+    if (bleMessageQueue != nullptr) {
+      xQueueReset(bleMessageQueue);
+    }
+    currentBleMessageActive = false;
+    currentBleMessageOffset = 0;
     snifferStartRequested = false;
     snifferStartAtMs = 0;
     stopSniffer();
@@ -1191,6 +1245,7 @@ void setup() {
 
   loadDynamicSignatures();
   detectionQueue = xQueueCreate(24, sizeof(DetectionEvent));
+  bleMessageQueue = xQueueCreate(8, sizeof(BleMessage));
   setupBle();
   emitStatus("boot");
 }
@@ -1215,6 +1270,8 @@ void loop() {
   if (signatureApplyRequested) {
     applyStagedSignatures();
   }
+
+  drainBleNotifications(nowMs);
 
   if (wifiSnifferActive && nowMs - lastChannelHopMs >= CHANNEL_DWELL_MS) {
     channelIndex = (channelIndex + 1) % (sizeof(CHANNELS) / sizeof(CHANNELS[0]));

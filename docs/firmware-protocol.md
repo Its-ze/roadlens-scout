@@ -8,8 +8,9 @@ only after the phone has connected, subscribed to notifications, and sent
 `start-scan`. On disconnect, Wi-Fi monitor mode is stopped and BLE advertising
 restarts.
 
-Outgoing JSON records are split into 180-byte BLE notifications. The app buffers
-those chunks until the newline terminator before parsing the complete record.
+Outgoing JSON records are queued and sent as paced 180-byte BLE notifications.
+The app buffers those chunks until the newline terminator before parsing the
+complete record.
 
 Firmware `0.1.18` scans 2.4 GHz channels 1-11, uses the public Flock-style
 Wi-Fi signature set, detects empty probe requests, and parses Wi-Fi management
