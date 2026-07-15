@@ -12,7 +12,7 @@
 #include "signatures.h"
 
 #ifndef ROADLENS_FIRMWARE_VERSION
-#define ROADLENS_FIRMWARE_VERSION "0.1.17"
+#define ROADLENS_FIRMWARE_VERSION "0.1.18"
 #endif
 
 #ifndef ROADLENS_CHIP_FAMILY
@@ -32,6 +32,7 @@ static constexpr uint8_t LED_PIN = 2;
 static constexpr uint32_t CHANNEL_DWELL_MS = 180;
 static constexpr uint32_t DUPLICATE_SUPPRESS_MS = 15000;
 static constexpr uint32_t STATUS_INTERVAL_MS = 5000;
+static constexpr size_t BLE_NOTIFY_CHUNK_BYTES = 180;
 static constexpr uint32_t OTA_WIFI_TIMEOUT_MS = 25000;
 static constexpr uint32_t OTA_HTTP_IDLE_TIMEOUT_MS = 45000;
 static constexpr size_t MAX_DYNAMIC_SIGNATURES = 96;
@@ -638,9 +639,13 @@ static void snifferCallback(void *buf, wifi_promiscuous_pkt_type_t type) {
 static void emitLine(const String &line) {
   Serial.print(line);
   if (bleConnected && notifyCharacteristic != nullptr) {
-    notifyCharacteristic->setValue(reinterpret_cast<const uint8_t *>(line.c_str()),
-                                   line.length());
-    notifyCharacteristic->notify();
+    const uint8_t *bytes = reinterpret_cast<const uint8_t *>(line.c_str());
+    const size_t length = line.length();
+    notifyCharacteristic->setValue(bytes, length);
+    for (size_t offset = 0; offset < length; offset += BLE_NOTIFY_CHUNK_BYTES) {
+      const size_t chunkLength = min(BLE_NOTIFY_CHUNK_BYTES, length - offset);
+      notifyCharacteristic->notify(bytes + offset, chunkLength);
+    }
   }
 }
 
