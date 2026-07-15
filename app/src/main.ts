@@ -189,6 +189,7 @@ type SensorSession = {
   reconnectTimer: number | null;
   intentionalDisconnect: boolean;
   connecting: boolean;
+  detail: string;
   signatureSyncBusy: boolean;
   signatureSyncedForKey: string;
   automaticSignatureSyncPausedUntil: number;
@@ -403,8 +404,6 @@ let spots: Spot[] = readStoredSpots();
 let fieldObservations: FieldObservation[] = readStoredFieldObservations();
 let seedObservationTimes = buildSeedObservationTimes(fieldObservations);
 let smartTargets: SmartTarget[] = [];
-let notificationBuffer = '';
-let connectedDevice: BleDevice | null = null;
 let lastPosition: Position | null = null;
 let watchId: string | null = null;
 let usbDevices: RoadLensUsbDevice[] = [];
@@ -412,16 +411,13 @@ let selectedUsbDevice: RoadLensUsbDevice | null = null;
 let usbFlashBusy = false;
 let phoneBleSweepActive = false;
 let phoneBleSeen = new Map<string, number>();
-let lastSensorStatus: SensorStatus | null = null;
 let latestSiteMeta: SiteMeta | null = null;
 let moduleUpdateBusy = false;
+let moduleUpdateSensorSlotId: number | null = null;
 let moduleUpdatePromptedForVersion = '';
 let activeSignatures: SignatureFeed = readCachedSignatureFeed() ?? buildDefaultSignatureFeed();
 let signatureIndex: SignatureIndex = buildSignatureIndex(activeSignatures);
 let signatureFetchPromise: Promise<SignatureFeed> | null = null;
-let signatureSyncBusy = false;
-let signatureSyncedForKey = '';
-let automaticSignatureSyncPausedUntil = 0;
 let activeCameraSeeds: CameraSeedFeed = buildEmptyCameraSeedFeed();
 let cameraSeedIndex: CameraSeedIndex = buildCameraSeedIndex(activeCameraSeeds.points);
 let cameraSeedFetchPromise: Promise<CameraSeedFeed> | null = null;
@@ -430,10 +426,21 @@ let mapLearning: MapLearningState = readMapLearningState();
 let programmaticMapMoveUntil = 0;
 let lastUserMapInteractionAt = 0;
 let lastAutoCenterAt = 0;
-let lastConnectedDevice: BleDevice | null = null;
-let reconnectAttempt = 0;
-let reconnectTimer: number | null = null;
-let intentionalDisconnect = false;
+const sensorSessions: SensorSession[] = Array.from({ length: MAX_SENSOR_CONNECTIONS }, (_, slotId) => ({
+  slotId,
+  device: null,
+  lastDevice: null,
+  status: null,
+  notificationBuffer: '',
+  reconnectAttempt: 0,
+  reconnectTimer: null,
+  intentionalDisconnect: false,
+  connecting: false,
+  detail: 'Ready to pair',
+  signatureSyncBusy: false,
+  signatureSyncedForKey: '',
+  automaticSignatureSyncPausedUntil: 0,
+}));
 
 type WifiReadoutState = 'unknown' | 'connected' | 'limited' | 'offline' | 'error';
 
@@ -539,7 +546,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <div class="connection-panel">
           <div class="connection-icon"><i data-lucide="bluetooth"></i></div>
           <div>
-            <span>ESP32 sensor</span>
+            <span>ESP32 sensor fleet</span>
             <strong id="actionSensorSummary">Sensor offline</strong>
           </div>
           <button id="mobileConnectButton" class="primary">
@@ -579,6 +586,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
         <section class="panel-section setup-panel">
           <div class="section-title">
+            <h3>Sensor Fleet</h3>
+            <span>pair up to 2</span>
+          </div>
+          <div id="sensorSlotList" class="sensor-slot-list"></div>
+          <div class="section-title setup-subtitle">
             <h3>USB Setup</h3>
             <span id="usbSummary">No device checked</span>
           </div>
@@ -690,6 +702,7 @@ const actionGpsSummary = document.querySelector<HTMLElement>('#actionGpsSummary'
 const actionWifiSummary = document.querySelector<HTMLElement>('#actionWifiSummary')!;
 const actionFirmwareSummary = document.querySelector<HTMLElement>('#actionFirmwareSummary')!;
 const actionDataSummary = document.querySelector<HTMLElement>('#actionDataSummary')!;
+const sensorSlotList = document.querySelector<HTMLDivElement>('#sensorSlotList')!;
 const usbSummary = document.querySelector<HTMLSpanElement>('#usbSummary')!;
 const usbDeviceCard = document.querySelector<HTMLDivElement>('#usbDeviceCard')!;
 const usbScanButton = document.querySelector<HTMLButtonElement>('#usbScanButton')!;
@@ -707,12 +720,28 @@ const mobileTabButtons = Array.from(
 
 connectionButtons.forEach((button) => {
   button.addEventListener('click', () => {
-    if (connectedDevice) {
-      void disconnectSensor();
+    if (connectedSensorSessions().length >= MAX_SENSOR_CONNECTIONS) {
+      void disconnectAllSensors();
     } else {
       void connectSensor();
     }
   });
+});
+sensorSlotList.addEventListener('click', (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-sensor-slot]');
+  const slotId = Number(button?.dataset.sensorSlot);
+  if (!button || !Number.isInteger(slotId)) {
+    return;
+  }
+  const session = sensorSessions[slotId];
+  if (!session) {
+    return;
+  }
+  if (session.device) {
+    void disconnectSensor(session);
+  } else {
+    void connectSensor(slotId);
+  }
 });
 document.querySelector<HTMLButtonElement>('#manualButton')!.addEventListener('click', saveManualSpot);
 document.querySelector<HTMLButtonElement>('#mobileManualButton')!.addEventListener('click', saveManualSpot);
@@ -729,7 +758,9 @@ document.querySelector<HTMLButtonElement>('#mobileLocateButton')!.addEventListen
   setMobileTab('map');
   void centerToMyLocation({ forceFresh: true });
 });
-document.querySelector<HTMLButtonElement>('#statusButton')!.addEventListener('click', () => sendCommand('status'));
+document.querySelector<HTMLButtonElement>('#statusButton')!.addEventListener('click', () => {
+  void sendCommandToAll('status');
+});
 document.querySelector<HTMLFormElement>('#wifiCredentialForm')!.addEventListener('submit', (event) => {
   event.preventDefault();
 });
@@ -768,6 +799,7 @@ if (Capacitor.isNativePlatform()) {
 
 initMap();
 renderUsbSetup();
+renderSensorFleet();
 render();
 void startLocationWatch();
 void refreshWifiReadout({ quiet: true });
@@ -884,37 +916,72 @@ function setSmartMapView(lat: number, lon: number, zoom: number, options: L.Zoom
   map.setView([lat, lon], zoom, options);
 }
 
-async function connectSensor() {
+function connectedSensorSessions() {
+  return sensorSessions.filter((session) => Boolean(session.device));
+}
+
+function primarySensorSession() {
+  return connectedSensorSessions()[0] ?? null;
+}
+
+function sensorSlotLabel(session: SensorSession) {
+  return `Sensor ${session.slotId + 1}`;
+}
+
+function isSensorSessionConnected(session: SensorSession, deviceId?: string) {
+  return Boolean(session.device && (!deviceId || session.device.deviceId === deviceId));
+}
+
+async function connectSensor(preferredSlotId?: number) {
+  const session =
+    (preferredSlotId != null ? sensorSessions[preferredSlotId] : null) ??
+    sensorSessions.find((candidate) => !candidate.device && !candidate.connecting);
+  if (!session || session.device || session.connecting) {
+    return;
+  }
+
   let device: BleDevice | null = null;
   try {
-    intentionalDisconnect = false;
-    cancelReconnect();
+    session.intentionalDisconnect = false;
+    session.connecting = true;
+    session.detail = 'Preparing Bluetooth';
+    cancelReconnect(session);
     setConnectionButtonsDisabled(true);
-    setSensorState('busy', 'Preparing Bluetooth');
+    refreshSensorFleetState();
     await startLocationWatch();
     await BleClient.initialize({ androidNeverForLocation: false });
 
-    device = await findSensorDevice();
-    await attachSensor(device, { clearExistingLink: true });
-    reconnectAttempt = 0;
+    const excludedDeviceIds = new Set(connectedSensorSessions().map((candidate) => candidate.device!.deviceId));
+    device = await findSensorDevice(session, excludedDeviceIds);
+    if (excludedDeviceIds.has(device.deviceId)) {
+      throw new Error('That RoadLens sensor is already paired');
+    }
+    await attachSensor(session, device, { clearExistingLink: true });
+    session.reconnectAttempt = 0;
   } catch (error) {
-    intentionalDisconnect = true;
+    session.intentionalDisconnect = true;
     if (device) {
       await BleClient.disconnect(device.deviceId).catch(() => undefined);
     }
-    cancelReconnect();
-    intentionalDisconnect = false;
-    connectedDevice = null;
-    setSensorState('error', error instanceof Error ? error.message : 'Connection failed');
-    signalText.textContent = 'Error';
+    cancelReconnect(session);
+    session.intentionalDisconnect = false;
+    session.device = null;
+    session.status = null;
+    session.detail = error instanceof Error ? error.message : 'Connection failed';
   } finally {
+    session.connecting = false;
     setConnectionButtonsDisabled(false);
-    updateConnectionButton();
+    refreshSensorFleetState();
   }
 }
 
-async function attachSensor(device: BleDevice, options: { clearExistingLink?: boolean } = {}) {
-  setSensorState('busy', `Connecting to ${device.name ?? 'sensor'}`);
+async function attachSensor(
+  session: SensorSession,
+  device: BleDevice,
+  options: { clearExistingLink?: boolean } = {},
+) {
+  session.detail = `Connecting to ${device.name ?? SENSOR_NAME}`;
+  refreshSensorFleetState();
   if (options.clearExistingLink) {
     await BleClient.disconnect(device.deviceId).catch(() => undefined);
     await delay(250);
@@ -922,18 +989,20 @@ async function attachSensor(device: BleDevice, options: { clearExistingLink?: bo
   await BleClient.connect(
     device.deviceId,
     () => {
-      if (connectedDevice?.deviceId === device.deviceId) {
-        handleSensorDisconnect({ unexpected: !intentionalDisconnect, device });
+      if (session.device?.deviceId === device.deviceId) {
+        handleSensorDisconnect(session, { unexpected: !session.intentionalDisconnect, device });
       }
     },
     { timeout: 15000 },
   );
 
-  connectedDevice = device;
-  lastConnectedDevice = device;
-  lastSensorStatus = null;
+  session.device = device;
+  session.lastDevice = device;
+  session.status = null;
+  session.notificationBuffer = '';
+  session.detail = `${device.name ?? SENSOR_NAME} connected`;
   moduleUpdatePromptedForVersion = '';
-  signatureSyncedForKey = '';
+  session.signatureSyncedForKey = '';
   await BleClient.requestConnectionPriority(
     device.deviceId,
     ConnectionPriority.CONNECTION_PRIORITY_HIGH,
@@ -942,206 +1011,296 @@ async function attachSensor(device: BleDevice, options: { clearExistingLink?: bo
     device.deviceId,
     SERVICE_UUID,
     NOTIFY_UUID,
-    handleNotification,
+    (value) => handleNotification(session, value),
     { timeout: 10000 },
   );
-  setSensorState('online', `${device.name ?? SENSOR_NAME} connected`);
-  signalText.textContent = 'Linked';
-  updateConnectionButton();
-  await stabilizeSensorAfterConnect();
+  refreshSensorFleetState();
+  await stabilizeSensorAfterConnect(session);
 }
 
-async function stabilizeSensorAfterConnect() {
-  automaticSignatureSyncPausedUntil = Date.now() + AUTOMATIC_SIGNATURE_SYNC_SUPPRESS_MS;
+async function stabilizeSensorAfterConnect(session: SensorSession) {
+  const deviceId = session.device?.deviceId;
+  if (!deviceId) {
+    return;
+  }
+  session.automaticSignatureSyncPausedUntil = Date.now() + AUTOMATIC_SIGNATURE_SYNC_SUPPRESS_MS;
   try {
-    setSensorState('busy', 'Stabilizing BLE link');
+    session.detail = 'Stabilizing BLE link';
+    refreshSensorFleetState();
     await delay(BLE_HANDSHAKE_SETTLE_MS);
-    if (!connectedDevice) {
+    if (!isSensorSessionConnected(session, deviceId)) {
       return;
     }
 
     // Cancel any pending scan from older firmware before sending a command burst.
-    await sendCommandWithRetry('stop-scan', 1).catch(() => undefined);
+    await sendCommandWithRetry('stop-scan', 1, session).catch(() => undefined);
     await delay(150);
-    if (!connectedDevice) {
+    if (!isSensorSessionConnected(session, deviceId)) {
       return;
     }
 
     let startupStatus: SensorStatus | null = null;
     try {
-      await sendCommandWithRetry('status', 2);
-      startupStatus = await waitForSensorStatus(SENSOR_STATUS_WAIT_MS);
+      await sendCommandWithRetry('status', 2, session);
+      startupStatus = await waitForSensorStatus(session, SENSOR_STATUS_WAIT_MS);
     } catch (error) {
       setModuleState('Sensor linked', error instanceof Error ? error.message : 'Status check delayed');
     }
-    if (!connectedDevice) {
+    if (!isSensorSessionConnected(session, deviceId)) {
       return;
     }
 
     if (startupStatus) {
       try {
-        await maybeSyncSensorSignatures(startupStatus, { force: true });
+        await maybeSyncSensorSignatures(session, startupStatus, { force: true });
       } catch (error) {
         setModuleState('Signature sync delayed', error instanceof Error ? error.message : 'Using sensor list');
       }
     }
-    if (!connectedDevice) {
+    if (!isSensorSessionConnected(session, deviceId)) {
       return;
     }
 
     await delay(SENSOR_SCAN_START_DELAY_MS);
-    if (!connectedDevice) {
+    if (!isSensorSessionConnected(session, deviceId)) {
       return;
     }
 
     try {
-      await sendCommandWithRetry('start-scan', 2);
-      if (connectedDevice) {
-        setSensorState('online', `${connectedDevice.name ?? SENSOR_NAME} scanning`);
+      await sendCommandWithRetry('start-scan', 2, session);
+      if (isSensorSessionConnected(session, deviceId)) {
+        session.detail = `${session.device?.name ?? SENSOR_NAME} scanning`;
+        refreshSensorFleetState();
       }
     } catch (error) {
-      setSensorState('online', `${connectedDevice?.name ?? SENSOR_NAME} linked`);
+      session.detail = `${session.device?.name ?? SENSOR_NAME} linked`;
+      refreshSensorFleetState();
       setModuleState('Scan start delayed', error instanceof Error ? error.message : 'Tap Connect again if needed');
     }
   } finally {
-    automaticSignatureSyncPausedUntil = 0;
+    session.automaticSignatureSyncPausedUntil = 0;
   }
 }
 
-async function waitForSensorStatus(timeoutMs: number) {
-  const existingStatus = lastSensorStatus;
+async function waitForSensorStatus(session: SensorSession, timeoutMs: number) {
+  const existingStatus = session.status;
   const startedAt = Date.now();
 
-  while (Date.now() - startedAt < timeoutMs && connectedDevice) {
-    if (lastSensorStatus && lastSensorStatus !== existingStatus) {
-      return lastSensorStatus;
+  while (Date.now() - startedAt < timeoutMs && session.device) {
+    if (session.status && session.status !== existingStatus) {
+      return session.status;
     }
     await delay(100);
   }
 
-  return lastSensorStatus;
+  return session.status;
 }
 
-async function disconnectSensor() {
-  if (!connectedDevice) {
-    handleSensorDisconnect();
+async function disconnectSensor(session: SensorSession) {
+  if (!session.device) {
+    handleSensorDisconnect(session);
     return;
   }
 
-  const deviceId = connectedDevice.deviceId;
-  intentionalDisconnect = true;
-  cancelReconnect();
+  const deviceId = session.device.deviceId;
+  session.intentionalDisconnect = true;
+  session.connecting = true;
+  session.detail = 'Disconnecting';
+  cancelReconnect(session);
   setConnectionButtonsDisabled(true);
-  setSensorState('busy', 'Disconnecting sensor');
+  refreshSensorFleetState();
 
   try {
-    await sendCommand('stop-scan').catch(() => undefined);
+    await sendCommand('stop-scan', {}, session).catch(() => undefined);
     await delay(50);
     await BleClient.stopNotifications(deviceId, SERVICE_UUID, NOTIFY_UUID).catch(() => undefined);
     await BleClient.disconnect(deviceId).catch(() => undefined);
   } finally {
+    handleSensorDisconnect(session, { unexpected: false });
+    session.intentionalDisconnect = false;
+    session.connecting = false;
     setConnectionButtonsDisabled(false);
-    handleSensorDisconnect({ unexpected: false });
-    intentionalDisconnect = false;
+    refreshSensorFleetState();
   }
 }
 
-function handleSensorDisconnect(options: { unexpected?: boolean; device?: BleDevice } = {}) {
-  const reconnectDevice = options.device ?? connectedDevice ?? lastConnectedDevice;
-  connectedDevice = null;
-  lastSensorStatus = null;
-  moduleUpdateBusy = false;
-  signatureSyncBusy = false;
-  signatureSyncedForKey = '';
-  automaticSignatureSyncPausedUntil = 0;
-  moduleOtaButton.disabled = false;
-  notificationBuffer = '';
-  setSensorState(options.unexpected ? 'busy' : 'offline', options.unexpected ? 'Sensor link lost' : 'Sensor disconnected');
-  setModuleState('Sensor firmware', 'Connect RoadLensESP32');
-  signalText.textContent = 'Offline';
-  updateConnectionButton();
-  if (options.unexpected && !intentionalDisconnect && reconnectDevice) {
-    scheduleReconnect(reconnectDevice);
+async function disconnectAllSensors() {
+  const connected = connectedSensorSessions();
+  await Promise.all(connected.map((session) => disconnectSensor(session)));
+}
+
+function handleSensorDisconnect(
+  session: SensorSession,
+  options: { unexpected?: boolean; device?: BleDevice } = {},
+) {
+  const reconnectDevice = options.device ?? session.device ?? session.lastDevice;
+  session.device = null;
+  session.status = null;
+  session.signatureSyncBusy = false;
+  session.signatureSyncedForKey = '';
+  session.automaticSignatureSyncPausedUntil = 0;
+  session.notificationBuffer = '';
+  session.detail = options.unexpected ? 'Link lost' : 'Ready to pair';
+  if (moduleUpdateSensorSlotId === session.slotId) {
+    moduleUpdateBusy = false;
+    moduleUpdateSensorSlotId = null;
+    moduleOtaButton.disabled = false;
+  }
+
+  const primary = primarySensorSession();
+  if (primary?.status) {
+    renderModuleStatus(primary.status, primary);
+  } else if (!primary) {
+    setModuleState('Sensor firmware', 'Connect a RoadLens sensor');
+  }
+  refreshSensorFleetState();
+  if (options.unexpected && !session.intentionalDisconnect && reconnectDevice) {
+    scheduleReconnect(session, reconnectDevice);
   }
 }
 
 function updateConnectionButton() {
-  const icon = connectedDevice ? 'bluetooth-off' : 'bluetooth';
-  const label = connectedDevice ? 'Disconnect' : 'Connect';
+  const count = connectedSensorSessions().length;
+  const full = count >= MAX_SENSOR_CONNECTIONS;
+  const icon = full ? 'bluetooth-off' : 'bluetooth';
+  const label = full ? 'Disconnect all' : count === 1 ? 'Add 2nd' : 'Pair sensor';
   for (const button of connectionButtons) {
-    button.classList.toggle('danger', Boolean(connectedDevice));
-    button.classList.toggle('primary', !connectedDevice);
+    button.classList.toggle('danger', full);
+    button.classList.toggle('primary', !full);
     button.innerHTML = `<i data-lucide="${icon}"></i><span>${label}</span>`;
   }
   createIcons({ icons });
+}
+
+function renderSensorFleet() {
+  const fleetBusy = sensorSessions.some((session) => session.connecting);
+  sensorSlotList.innerHTML = sensorSessions
+    .map((session) => {
+      const connected = Boolean(session.device);
+      const scanning = Boolean(session.status?.sniffer_active) || session.detail.toLowerCase().endsWith('scanning');
+      const title = session.device?.name ?? sensorSlotLabel(session);
+      const version = session.status?.firmware_version ? `v${session.status.firmware_version}` : '';
+      const detail = connected
+        ? `${scanning ? 'Scanning' : 'Linked'}${version ? ` | ${version}` : ''}`
+        : session.detail;
+      const buttonLabel = connected ? 'Disconnect' : 'Pair';
+      const buttonIcon = connected ? 'bluetooth-off' : 'bluetooth';
+      const disabled = session.connecting || (!connected && fleetBusy);
+      return `
+        <div class="sensor-slot" data-state="${connected ? (scanning ? 'scanning' : 'linked') : session.connecting ? 'busy' : 'offline'}">
+          <span class="sensor-slot-index">${session.slotId + 1}</span>
+          <div class="sensor-slot-copy">
+            <strong>${escapeHtml(title)}</strong>
+            <span>${escapeHtml(detail)}</span>
+          </div>
+          <button data-sensor-slot="${session.slotId}" class="${connected ? 'danger' : 'primary'}" ${disabled ? 'disabled' : ''}>
+            <i data-lucide="${buttonIcon}"></i><span>${buttonLabel}</span>
+          </button>
+        </div>
+      `;
+    })
+    .join('');
+  createIcons({ icons });
+}
+
+function refreshSensorFleetState() {
+  const connected = connectedSensorSessions();
+  const connecting = sensorSessions.find((session) => session.connecting);
+  const scanning = connected.filter(
+    (session) => session.status?.sniffer_active || session.detail.toLowerCase().endsWith('scanning'),
+  ).length;
+
+  if (connecting) {
+    setSensorState('busy', `${connected.length}/${MAX_SENSOR_CONNECTIONS} linked | ${connecting.detail}`);
+  } else if (connected.length > 0) {
+    const detail =
+      scanning === connected.length
+        ? `${connected.length}/${MAX_SENSOR_CONNECTIONS} sensors scanning`
+        : `${connected.length}/${MAX_SENSOR_CONNECTIONS} linked${scanning ? ` | ${scanning} scanning` : ''}`;
+    setSensorState('online', detail);
+  } else {
+    const failed = sensorSessions.find((session) => session.detail.startsWith('Reconnect failed'));
+    setSensorState(failed ? 'error' : 'offline', failed?.detail ?? '0/2 sensors paired');
+  }
+
+  signalText.textContent = `${connected.length}/${MAX_SENSOR_CONNECTIONS}`;
+  updateConnectionButton();
+  renderSensorFleet();
 }
 
 function setConnectionButtonsDisabled(disabled: boolean) {
   connectionButtons.forEach((button) => {
     button.disabled = disabled;
   });
+  renderSensorFleet();
 }
 
-function cancelReconnect() {
-  if (reconnectTimer != null) {
-    window.clearTimeout(reconnectTimer);
-    reconnectTimer = null;
+function cancelReconnect(session: SensorSession) {
+  if (session.reconnectTimer != null) {
+    window.clearTimeout(session.reconnectTimer);
+    session.reconnectTimer = null;
   }
-  reconnectAttempt = 0;
+  session.reconnectAttempt = 0;
 }
 
-function scheduleReconnect(device: BleDevice) {
-  if (reconnectTimer != null) return;
-  if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
-    setSensorState('error', 'Sensor disconnected - tap Connect');
-    signalText.textContent = 'Offline';
+function scheduleReconnect(session: SensorSession, device: BleDevice) {
+  if (session.reconnectTimer != null) return;
+  if (session.reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+    session.detail = 'Reconnect failed - tap Pair';
+    refreshSensorFleetState();
     return;
   }
 
-  reconnectAttempt += 1;
-  const attempt = reconnectAttempt;
+  session.reconnectAttempt += 1;
+  const attempt = session.reconnectAttempt;
   const delayMs = RECONNECT_BASE_DELAY_MS * attempt;
-  setSensorState('busy', `Reconnecting ${attempt}/${MAX_RECONNECT_ATTEMPTS}`);
-  signalText.textContent = 'Retry';
-  reconnectTimer = window.setTimeout(() => {
-    reconnectTimer = null;
-    void reconnectSensor(device);
+  session.detail = `Reconnecting ${attempt}/${MAX_RECONNECT_ATTEMPTS}`;
+  refreshSensorFleetState();
+  session.reconnectTimer = window.setTimeout(() => {
+    session.reconnectTimer = null;
+    void reconnectSensor(session, device);
   }, delayMs);
 }
 
-async function reconnectSensor(device: BleDevice) {
-  if (intentionalDisconnect || connectedDevice) return;
+async function reconnectSensor(session: SensorSession, device: BleDevice) {
+  if (session.intentionalDisconnect || session.device) return;
+  session.connecting = true;
   setConnectionButtonsDisabled(true);
   try {
     await BleClient.initialize({ androidNeverForLocation: false });
-    await attachSensor(device);
-    reconnectAttempt = 0;
-    setSensorState('online', `${device.name ?? SENSOR_NAME} reconnected`);
+    await attachSensor(session, device);
+    session.reconnectAttempt = 0;
+    session.detail = `${device.name ?? SENSOR_NAME} reconnected`;
   } catch {
-    connectedDevice = null;
-    scheduleReconnect(device);
+    session.device = null;
+    scheduleReconnect(session, device);
   } finally {
+    session.connecting = false;
     setConnectionButtonsDisabled(false);
-    updateConnectionButton();
+    refreshSensorFleetState();
   }
 }
 
-async function findSensorDevice(): Promise<BleDevice> {
+async function findSensorDevice(session: SensorSession, excludedDeviceIds: Set<string>): Promise<BleDevice> {
   if (Capacitor.getPlatform() !== 'web') {
-    const scannedDevice = await scanForSensorDevice();
+    const scannedDevice = await scanForSensorDevice(session, excludedDeviceIds);
     if (scannedDevice) {
       return scannedDevice;
     }
   }
 
-  return requestSensorFromPicker();
+  return requestSensorFromPicker(session, excludedDeviceIds);
 }
 
-async function scanForSensorDevice(): Promise<BleDevice | null> {
+async function scanForSensorDevice(
+  session: SensorSession,
+  excludedDeviceIds: Set<string>,
+): Promise<BleDevice | null> {
   let bestDevice: BleDevice | null = null;
   let bestRssi = Number.NEGATIVE_INFINITY;
 
-  setSensorState('busy', 'Scanning for RoadLensESP32');
+  session.detail = 'Scanning for RoadLens sensors';
+  refreshSensorFleetState();
 
   try {
     await BleClient.requestLEScan(
@@ -1161,12 +1320,16 @@ async function scanForSensorDevice(): Promise<BleDevice | null> {
         if (!isRoadLens) {
           return;
         }
+        if (excludedDeviceIds.has(result.device.deviceId)) {
+          return;
+        }
 
         const rssi = result.rssi ?? Number.NEGATIVE_INFINITY;
         if (!bestDevice || rssi > bestRssi) {
           bestDevice = result.device;
           bestRssi = rssi;
-          setSensorState('busy', `Found ${name || SENSOR_NAME}`);
+          session.detail = `Found ${name || SENSOR_NAME}`;
+          refreshSensorFleetState();
         }
       },
     );
@@ -1181,7 +1344,10 @@ async function scanForSensorDevice(): Promise<BleDevice | null> {
   return bestDevice;
 }
 
-async function requestSensorFromPicker(): Promise<BleDevice> {
+async function requestSensorFromPicker(
+  session: SensorSession,
+  excludedDeviceIds: Set<string>,
+): Promise<BleDevice> {
   const attempts = [
     {
       label: 'Opening RoadLens service picker',
@@ -1211,9 +1377,17 @@ async function requestSensorFromPicker(): Promise<BleDevice> {
 
   for (const attempt of attempts) {
     try {
-      setSensorState('busy', attempt.label);
-      return await BleClient.requestDevice(attempt.options);
+      session.detail = attempt.label;
+      refreshSensorFleetState();
+      const device = await BleClient.requestDevice(attempt.options);
+      if (excludedDeviceIds.has(device.deviceId)) {
+        throw new Error('That RoadLens sensor is already paired; choose the other sensor');
+      }
+      return device;
     } catch (error) {
+      if (error instanceof Error && error.message.includes('already paired')) {
+        throw error;
+      }
       lastError = error;
     }
   }
@@ -1231,12 +1405,16 @@ type SendCommandOptions = {
   preferResponse?: boolean;
 };
 
-async function sendCommand(command: string, options: SendCommandOptions = {}) {
-  if (!connectedDevice) {
+async function sendCommand(
+  command: string,
+  options: SendCommandOptions = {},
+  session: SensorSession | null = primarySensorSession(),
+) {
+  if (!session?.device) {
     setSensorState('offline', 'Sensor offline');
     throw new Error('Sensor offline');
   }
-  const deviceId = connectedDevice.deviceId;
+  const deviceId = session.device.deviceId;
   const bytes = encoder.encode(`${command}\n`);
   const value = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 
@@ -1282,11 +1460,24 @@ async function sendCommand(command: string, options: SendCommandOptions = {}) {
   }
 }
 
-async function sendCommandWithRetry(command: string, attempts: number) {
+async function sendCommandToAll(command: string, options: SendCommandOptions = {}) {
+  const connected = connectedSensorSessions();
+  if (!connected.length) {
+    setSensorState('offline', 'No sensors paired');
+    return;
+  }
+  const results = await Promise.allSettled(connected.map((session) => sendCommand(command, options, session)));
+  const failed = results.filter((result) => result.status === 'rejected').length;
+  if (failed) {
+    setSensorState('error', `${failed}/${connected.length} sensor commands failed`);
+  }
+}
+
+async function sendCommandWithRetry(command: string, attempts: number, session: SensorSession) {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      await sendCommand(command);
+      await sendCommand(command, {}, session);
       return;
     } catch (error) {
       lastError = error;
@@ -1537,96 +1728,98 @@ function toHexId(value: number) {
   return `0x${value.toString(16).padStart(4, '0')}`;
 }
 
-function handleNotification(value: DataView) {
+function handleNotification(session: SensorSession, value: DataView) {
   const chunk = decoder.decode(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
-  notificationBuffer += chunk;
+  session.notificationBuffer += chunk;
 
-  let newlineIndex = notificationBuffer.indexOf('\n');
+  let newlineIndex = session.notificationBuffer.indexOf('\n');
   while (newlineIndex >= 0) {
-    const line = notificationBuffer.slice(0, newlineIndex).trim();
-    notificationBuffer = notificationBuffer.slice(newlineIndex + 1);
+    const line = session.notificationBuffer.slice(0, newlineIndex).trim();
+    session.notificationBuffer = session.notificationBuffer.slice(newlineIndex + 1);
     if (line) {
-      handleSensorLine(line);
+      handleSensorLine(session, line);
     }
-    newlineIndex = notificationBuffer.indexOf('\n');
+    newlineIndex = session.notificationBuffer.indexOf('\n');
   }
 }
 
-function handleSensorLine(line: string) {
+function handleSensorLine(session: SensorSession, line: string) {
   try {
     const message = JSON.parse(line) as SensorStatus | DetectionMessage | OtaMessage | SignatureMessage;
     if (message.type === 'status') {
-      handleStatus(message);
+      handleStatus(session, message);
     } else if (message.type === 'detection') {
-      void saveDetection(message);
+      void saveDetection(message, session);
     } else if (message.type === 'ota') {
-      handleOtaMessage(message);
+      handleOtaMessage(session, message);
     } else if (message.type === 'signatures') {
-      handleSignatureMessage(message);
+      handleSignatureMessage(session, message);
     }
   } catch {
-    setSensorState('online', line.slice(0, 90));
+    session.detail = line.slice(0, 90);
+    refreshSensorFleetState();
   }
 }
 
-function handleStatus(status: SensorStatus) {
-  lastSensorStatus = status;
+function handleStatus(session: SensorSession, status: SensorStatus) {
+  session.status = status;
   const reason = status.reason ? ` ${status.reason}` : '';
   const channel = status.channel ? ` ch${status.channel}` : '';
-  setSensorState(status.ble_connected === false ? 'offline' : 'online', `${status.device ?? SENSOR_NAME}${reason}${channel}`);
+  session.detail = `${status.device ?? session.device?.name ?? SENSOR_NAME}${reason}${channel}`;
+  refreshSensorFleetState();
 
-  if (typeof status.detections === 'number' && status.detections > 0) {
-    signalText.textContent = `${status.detections}`;
-  } else if (status.sniffer_active) {
-    signalText.textContent = 'Scan';
-  } else {
-    signalText.textContent = 'Linked';
-  }
-
-  if (status.sniffer_active && status.detections === 0 && typeof status.frames_seen === 'number') {
-    const candidates = status.candidate_frames ?? 0;
-    const wildcards = status.wildcard_probes ?? 0;
+  const fleetStatuses = connectedSensorSessions().map((candidate) => candidate.status).filter(Boolean) as SensorStatus[];
+  const frames = fleetStatuses.reduce((sum, item) => sum + (item.frames_seen ?? 0), 0);
+  const detections = fleetStatuses.reduce((sum, item) => sum + (item.detections ?? 0), 0);
+  if (fleetStatuses.some((item) => item.sniffer_active) && detections === 0) {
+    const candidates = fleetStatuses.reduce((sum, item) => sum + (item.candidate_frames ?? 0), 0);
+    const wildcards = fleetStatuses.reduce((sum, item) => sum + (item.wildcard_probes ?? 0), 0);
     mapFocusText.textContent =
-      status.frames_seen > 0
-        ? `Scanning: ${status.frames_seen} frames, ${candidates} candidates, ${wildcards} wildcard probes`
+      frames > 0
+        ? `Dual scan: ${frames} frames, ${candidates} candidates, ${wildcards} wildcard probes`
         : 'Scanning: no 2.4 GHz frames seen yet';
   }
 
-  renderModuleStatus(status);
-  void maybePromptForModuleUpdate(status);
-  void maybeSyncSensorSignatures(status);
+  if (primarySensorSession()?.slotId === session.slotId) {
+    renderModuleStatus(status, session);
+    void maybePromptForModuleUpdate(session, status);
+  }
+  void maybeSyncSensorSignatures(session, status);
 }
 
-function handleSignatureMessage(message: SignatureMessage) {
+function handleSignatureMessage(session: SensorSession, message: SignatureMessage) {
   const count = typeof message.count === 'number' ? `${message.count} prefixes` : 'signature feed';
   const version = message.version ? ` ${message.version}` : '';
-  setModuleState(`Signatures ${message.state}`, `${count}${version}`);
+  setModuleState(`${sensorSlotLabel(session)} signatures ${message.state}`, `${count}${version}`);
 }
 
-function handleOtaMessage(message: OtaMessage) {
+function handleOtaMessage(session: SensorSession, message: OtaMessage) {
   const progress =
     typeof message.progress === 'number' && message.progress >= 0
       ? ` ${Math.round(message.progress)}%`
       : '';
   const detail = `${message.detail ?? message.state}${progress}`;
-  setModuleState(`OTA ${message.state}`, detail);
-  setSensorState(message.state === 'error' ? 'error' : 'busy', detail);
+  setModuleState(`${sensorSlotLabel(session)} OTA ${message.state}`, detail);
+  session.detail = detail;
+  refreshSensorFleetState();
 
   if (message.state === 'error' || message.state === 'rebooting') {
     moduleUpdateBusy = false;
+    moduleUpdateSensorSlotId = null;
     moduleOtaButton.disabled = false;
   }
 }
 
-function renderModuleStatus(status: SensorStatus) {
+function renderModuleStatus(status: SensorStatus, session: SensorSession = primarySensorSession()!) {
   const firmware = status.firmware_version ?? 'unknown';
   const chip = status.chip_family ?? 'unknown chip';
+  const sensorLabel = session ? sensorSlotLabel(session) : 'Sensor';
   const signatureDetail =
     typeof status.signature_count === 'number'
       ? `${status.signature_count} prefixes + ${activeSignatures.wifiSsidPatterns.length} SSID`
       : `${activeSignatures.wifiPrefixes.length} prefixes + ${activeSignatures.wifiSsidPatterns.length} SSID`;
   if (status.ota_in_progress) {
-    setModuleState('Sensor OTA running', `${chip} firmware ${firmware}`);
+    setModuleState(`${sensorLabel} OTA running`, `${chip} firmware ${firmware}`);
     moduleOtaButton.disabled = true;
     return;
   }
@@ -1634,19 +1827,19 @@ function renderModuleStatus(status: SensorStatus) {
   if (status.ota_supported) {
     const available = latestSiteMeta?.version;
     if (available && status.firmware_version && compareVersions(available, status.firmware_version) > 0) {
-      setModuleState(`Firmware ${firmware} -> ${available}`, `${chip} | ${signatureDetail}`);
+      setModuleState(`${sensorLabel} ${firmware} -> ${available}`, `${chip} | ${signatureDetail}`);
       return;
     }
-    setModuleState(`Firmware ${firmware}`, `${chip} OTA ready | ${signatureDetail}`);
+    setModuleState(`${sensorLabel} firmware ${firmware}`, `${chip} OTA ready | ${signatureDetail}`);
   } else {
-    setModuleState(`Firmware ${firmware}`, `${chip} needs USB flash for OTA`);
+    setModuleState(`${sensorLabel} firmware ${firmware}`, `${chip} needs USB flash for OTA`);
   }
 }
 
-async function maybePromptForModuleUpdate(status: SensorStatus) {
+async function maybePromptForModuleUpdate(session: SensorSession, status: SensorStatus) {
   if (
     moduleUpdateBusy ||
-    !connectedDevice ||
+    !session.device ||
     !status.ota_supported ||
     !status.firmware_version ||
     !status.chip_family
@@ -1658,21 +1851,21 @@ async function maybePromptForModuleUpdate(status: SensorStatus) {
     const meta = await fetchSiteMeta();
     const build = pickFirmwareBuild(meta, status.chip_family);
     if (!build || compareVersions(meta.version, status.firmware_version) <= 0) {
-      renderModuleStatus(status);
+      renderModuleStatus(status, session);
       return;
     }
 
-    renderModuleStatus(status);
+    renderModuleStatus(status, session);
     if (moduleUpdatePromptedForVersion === meta.version) {
       return;
     }
     moduleUpdatePromptedForVersion = meta.version;
 
     const ok = confirm(
-      `Update ESP32 sensor firmware ${status.firmware_version} -> ${meta.version} over Wi-Fi?`,
+      `Update ${sensorSlotLabel(session)} firmware ${status.firmware_version} -> ${meta.version} over Wi-Fi?`,
     );
     if (ok) {
-      await runModuleOtaUpdate({ meta, status, promptBeforeStart: false });
+      await runModuleOtaUpdate({ meta, status, session, promptBeforeStart: false });
     }
   } catch (error) {
     setModuleState('Firmware check failed', error instanceof Error ? error.message : 'Update metadata unavailable');
@@ -1682,23 +1875,26 @@ async function maybePromptForModuleUpdate(status: SensorStatus) {
 async function runModuleOtaUpdate(options: {
   meta?: SiteMeta;
   status?: SensorStatus;
+  session?: SensorSession;
   promptBeforeStart: boolean;
 }) {
   if (moduleUpdateBusy) {
     return;
   }
-  if (!connectedDevice) {
-    setModuleState('Sensor offline', 'Connect RoadLensESP32 first');
+  const session = options.session ?? primarySensorSession();
+  if (!session?.device) {
+    setModuleState('Sensor offline', 'Connect a RoadLens sensor first');
     return;
   }
 
-  const status = options.status ?? lastSensorStatus;
+  const status = options.status ?? session.status;
   if (!status?.ota_supported || !status.firmware_version || !status.chip_family) {
     setModuleState('USB flash needed', 'Connected firmware does not support OTA yet');
     return;
   }
 
   moduleUpdateBusy = true;
+  moduleUpdateSensorSlotId = session.slotId;
   moduleOtaButton.disabled = true;
 
   try {
@@ -1711,6 +1907,7 @@ async function runModuleOtaUpdate(options: {
     if (compareVersions(meta.version, status.firmware_version) <= 0) {
       setModuleState(`Firmware ${status.firmware_version}`, 'Sensor firmware is current');
       moduleUpdateBusy = false;
+      moduleUpdateSensorSlotId = null;
       moduleOtaButton.disabled = false;
       return;
     }
@@ -1722,6 +1919,7 @@ async function runModuleOtaUpdate(options: {
       if (!ok) {
         setModuleState('Sensor OTA canceled', `Firmware ${status.firmware_version}`);
         moduleUpdateBusy = false;
+        moduleUpdateSensorSlotId = null;
         moduleOtaButton.disabled = false;
         return;
       }
@@ -1729,22 +1927,26 @@ async function runModuleOtaUpdate(options: {
 
     const credentials = await getWifiCredentialsForOta();
     if (!credentials) {
+      moduleUpdateBusy = false;
+      moduleUpdateSensorSlotId = null;
+      moduleOtaButton.disabled = false;
       return;
     }
 
-    setModuleState('Staging OTA', `${build.chipFamily} firmware ${meta.version}`);
-    await sendOtaCommand('oc');
-    await sendOtaCommand(`ov:${meta.version}`);
-    await sendOtaCommand(`oz:${build.bytes}`);
-    await sendChunkedHexCommand('os', credentials.ssid, OTA_CREDENTIAL_CHUNK_BYTES);
-    await sendChunkedHexCommand('op', credentials.password, OTA_CREDENTIAL_CHUNK_BYTES);
+    setModuleState(`Staging ${sensorSlotLabel(session)} OTA`, `${build.chipFamily} firmware ${meta.version}`);
+    await sendOtaCommand('oc', session);
+    await sendOtaCommand(`ov:${meta.version}`, session);
+    await sendOtaCommand(`oz:${build.bytes}`, session);
+    await sendChunkedHexCommand('os', credentials.ssid, OTA_CREDENTIAL_CHUNK_BYTES, session);
+    await sendChunkedHexCommand('op', credentials.password, OTA_CREDENTIAL_CHUNK_BYTES, session);
     for (const chunk of chunkText(build.sha256.toLowerCase(), OTA_HASH_CHUNK_CHARS)) {
-      await sendOtaCommand(`oh:${chunk}`);
+      await sendOtaCommand(`oh:${chunk}`, session);
     }
-    await sendOtaCommand('ou');
+    await sendOtaCommand('ou', session);
     setModuleState('OTA queued', `${build.chipFamily} firmware ${meta.version}`);
   } catch (error) {
     moduleUpdateBusy = false;
+    moduleUpdateSensorSlotId = null;
     moduleOtaButton.disabled = false;
     setModuleState('Sensor OTA failed', error instanceof Error ? error.message : 'OTA failed');
   }
@@ -1840,16 +2042,21 @@ async function refreshWifiReadout(options: { quiet?: boolean; prefillSsid?: bool
   }
 }
 
-async function sendOtaCommand(command: string) {
-  await sendCommand(command);
+async function sendOtaCommand(command: string, session: SensorSession) {
+  await sendCommand(command, {}, session);
   await delay(OTA_COMMAND_DELAY_MS);
 }
 
-async function sendChunkedHexCommand(prefix: string, value: string, chunkBytes: number) {
+async function sendChunkedHexCommand(
+  prefix: string,
+  value: string,
+  chunkBytes: number,
+  session: SensorSession,
+) {
   const bytes = encoder.encode(value);
   for (let index = 0; index < bytes.length; index += chunkBytes) {
     const chunk = bytes.slice(index, index + chunkBytes);
-    await sendOtaCommand(`${prefix}:${bytesToHex(chunk)}`);
+    await sendOtaCommand(`${prefix}:${bytesToHex(chunk)}`, session);
   }
 }
 
@@ -2360,6 +2567,8 @@ async function maybeRecordSeedObservation(nearby: NearbyCameraSeed, position: Po
   }
 
   const coords = position.coords;
+  const connectedSensors = connectedSensorSessions();
+  const firmwareVersions = [...new Set(connectedSensors.map((session) => session.status?.firmware_version).filter(Boolean))];
   const observation: FieldObservation = {
     id: crypto.randomUUID(),
     createdAt: new Date(now).toISOString(),
@@ -2370,8 +2579,9 @@ async function maybeRecordSeedObservation(nearby: NearbyCameraSeed, position: Po
     lon: coords.longitude,
     accuracy: coords.accuracy ?? null,
     distanceMeters: Math.round(nearby.distanceMeters),
-    sensorConnected: Boolean(connectedDevice),
-    firmwareVersion: lastSensorStatus?.firmware_version,
+    sensorConnected: connectedSensors.length > 0,
+    sensorCount: connectedSensors.length,
+    firmwareVersion: firmwareVersions.join(', ') || undefined,
     signalCount: spots.length,
   };
 
