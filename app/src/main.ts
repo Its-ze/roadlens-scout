@@ -44,6 +44,7 @@ const COMMAND_WRITE_TIMEOUT_MS = 4500;
 const COMMAND_WRITE_FALLBACK_TIMEOUT_MS = 7500;
 const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_BASE_DELAY_MS = 1200;
+const MAX_SENSOR_CONNECTIONS = 2;
 const MAX_FIELD_OBSERVATIONS = 2000;
 const CAMERA_SEED_RENDER_MIN_ZOOM = 11;
 const CAMERA_SEED_RENDER_LIMIT = 450;
@@ -176,6 +177,21 @@ type SensorStatus = {
   signature_version?: string;
   signature_source?: string;
   signature_sync_supported?: boolean;
+};
+
+type SensorSession = {
+  slotId: number;
+  device: BleDevice | null;
+  lastDevice: BleDevice | null;
+  status: SensorStatus | null;
+  notificationBuffer: string;
+  reconnectAttempt: number;
+  reconnectTimer: number | null;
+  intentionalDisconnect: boolean;
+  connecting: boolean;
+  signatureSyncBusy: boolean;
+  signatureSyncedForKey: string;
+  automaticSignatureSyncPausedUntil: number;
 };
 
 type DetectionMessage = {
@@ -370,6 +386,7 @@ type FieldObservation = {
   accuracy: number | null;
   distanceMeters: number;
   sensorConnected: boolean;
+  sensorCount?: number;
   firmwareVersion?: string;
   signalCount: number;
 };
