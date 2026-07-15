@@ -1744,9 +1744,93 @@ function handleNotification(session: SensorSession, value: DataView) {
   }
 }
 
+function normalizeSensorMessage(
+  raw: Record<string, unknown>,
+): SensorStatus | DetectionMessage | OtaMessage | SignatureMessage | null {
+  if (typeof raw.type === 'string') {
+    return raw as SensorStatus | DetectionMessage | OtaMessage | SignatureMessage;
+  }
+
+  if (raw.t === 's') {
+    return {
+      type: 'status',
+      device: raw.d as string,
+      reason: raw.r as string,
+      uptime_ms: raw.u as number,
+      channel: raw.c as number,
+      ble_connected: Boolean(raw.b),
+      sniffer_active: Boolean(raw.a),
+      firmware_version: raw.v as string,
+      chip_family: raw.h as string,
+      ota_supported: Boolean(raw.o),
+      ota_in_progress: Boolean(raw.i),
+      ota_version: raw.ov as string,
+      signature_count: raw.g as number,
+      signature_version: raw.sv as string,
+      signature_source: raw.ss as string,
+      signature_sync_supported: Boolean(raw.sy),
+    };
+  }
+
+  if (raw.t === 'm') {
+    return {
+      type: 'status',
+      detections: raw.n as number,
+      frames_seen: raw.f as number,
+      mgmt_frames: raw.m as number,
+      data_frames: raw.x as number,
+      wildcard_probes: raw.w as number,
+      candidate_frames: raw.k as number,
+      queue_drops: raw.q as number,
+    };
+  }
+
+  if (raw.t === 'd') {
+    return {
+      type: 'detection',
+      source: 'wifi',
+      mac: raw.m as string,
+      ssid: raw.s as string,
+      role: raw.r as string,
+      label: raw.l as string,
+      rssi: raw.p as number,
+      channel: raw.c as number,
+      frame_type: raw.ft as number,
+      frame_subtype: raw.fs as number,
+      wildcard_probe: Boolean(raw.w),
+      confidence: raw.q as number,
+      uptime_ms: raw.u as number,
+    };
+  }
+
+  if (raw.t === 'o') {
+    return {
+      type: 'ota',
+      state: raw.s as string,
+      detail: raw.d as string,
+      progress: raw.p as number,
+      version: raw.v as string,
+      chip_family: raw.c as string,
+    };
+  }
+
+  if (raw.t === 'g') {
+    return {
+      type: 'signatures',
+      state: raw.s as string,
+      detail: raw.d as string,
+      count: raw.n as number,
+      version: raw.v as string,
+    };
+  }
+
+  return null;
+}
+
 function handleSensorLine(session: SensorSession, line: string) {
   try {
-    const message = JSON.parse(line) as SensorStatus | DetectionMessage | OtaMessage | SignatureMessage;
+    const message = normalizeSensorMessage(JSON.parse(line) as Record<string, unknown>);
+    if (!message) return;
     if (message.type === 'status') {
       handleStatus(session, message);
     } else if (message.type === 'detection') {
@@ -1763,6 +1847,7 @@ function handleSensorLine(session: SensorSession, line: string) {
 }
 
 function handleStatus(session: SensorSession, status: SensorStatus) {
+  status = { ...session.status, ...status, type: 'status' };
   session.status = status;
   const reason = status.reason ? ` ${status.reason}` : '';
   const channel = status.channel ? ` ch${status.channel}` : '';

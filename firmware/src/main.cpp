@@ -32,7 +32,7 @@ static constexpr uint8_t LED_PIN = 2;
 static constexpr uint32_t CHANNEL_DWELL_MS = 180;
 static constexpr uint32_t DUPLICATE_SUPPRESS_MS = 15000;
 static constexpr uint32_t STATUS_INTERVAL_MS = 5000;
-static constexpr size_t BLE_NOTIFY_CHUNK_BYTES = 180;
+static constexpr size_t BLE_NOTIFY_CHUNK_BYTES = 220;
 static constexpr uint32_t BLE_NOTIFY_INTERVAL_MS = 100;
 static constexpr size_t BLE_MESSAGE_MAX_BYTES = 900;
 static constexpr uint32_t OTA_WIFI_TIMEOUT_MS = 25000;
@@ -698,8 +698,7 @@ static void emitOtaStatus(const char *state, const String &detail,
   const String escapedDetail = jsonEscape(detail);
   char json[384];
   snprintf(json, sizeof(json),
-           "{\"type\":\"ota\",\"state\":\"%s\",\"detail\":\"%s\","
-           "\"progress\":%d,\"version\":\"%s\",\"chip_family\":\"%s\"}\n",
+           "{\"t\":\"o\",\"s\":\"%s\",\"d\":\"%s\",\"p\":%d,\"v\":\"%s\",\"c\":\"%s\"}\n",
            state, escapedDetail.c_str(), progress, ROADLENS_FIRMWARE_VERSION,
            ROADLENS_CHIP_FAMILY);
   emitLine(String(json));
@@ -710,42 +709,34 @@ static void emitSignatureStatus(const char *state, const String &detail,
   const String escapedDetail = jsonEscape(detail);
   char json[384];
   snprintf(json, sizeof(json),
-           "{\"type\":\"signatures\",\"state\":\"%s\",\"detail\":\"%s\","
-           "\"count\":%u,\"version\":\"%s\"}\n",
+           "{\"t\":\"g\",\"s\":\"%s\",\"d\":\"%s\",\"n\":%u,\"v\":\"%s\"}\n",
            state, escapedDetail.c_str(), static_cast<unsigned>(count),
            activeSignatureVersion());
   emitLine(String(json));
 }
 
 static void emitStatus(const char *reason) {
-  char json[900];
-  snprintf(json, sizeof(json),
-           "{\"type\":\"status\",\"device\":\"%s\",\"reason\":\"%s\","
-           "\"uptime_ms\":%lu,\"channel\":%u,\"detections\":%lu,"
-           "\"signature_count\":%u,\"ble_connected\":%s,"
-           "\"sniffer_active\":%s,\"frames_seen\":%lu,"
-           "\"mgmt_frames\":%lu,\"data_frames\":%lu,"
-           "\"wildcard_probes\":%lu,\"candidate_frames\":%lu,"
-           "\"queue_drops\":%lu,\"firmware_version\":\"%s\","
-           "\"chip_family\":\"%s\",\"ota_supported\":true,"
-           "\"ota_in_progress\":%s,\"ota_version\":\"%s\","
-           "\"signature_version\":\"%s\",\"signature_source\":\"%s\","
-           "\"signature_sync_supported\":true}\n",
-           deviceName, reason, static_cast<unsigned long>(millis()),
-           CHANNELS[channelIndex], static_cast<unsigned long>(detectionCount),
-           static_cast<unsigned>(activeSignatureCount()),
-           bleConnected ? "true" : "false",
-           wifiSnifferActive ? "true" : "false",
-           static_cast<unsigned long>(wifiFramesSeen),
-           static_cast<unsigned long>(mgmtFramesSeen),
-           static_cast<unsigned long>(dataFramesSeen),
+  char core[384];
+  snprintf(core, sizeof(core),
+           "{\"t\":\"s\",\"d\":\"%s\",\"r\":\"%s\",\"u\":%lu,\"c\":%u," 
+           "\"b\":%u,\"a\":%u,\"v\":\"%s\",\"h\":\"%s\",\"o\":1,\"i\":%u," 
+           "\"ov\":\"%s\",\"g\":%u,\"sv\":\"%s\",\"ss\":\"%s\",\"sy\":1}\n",
+           deviceName, reason, static_cast<unsigned long>(millis()), CHANNELS[channelIndex],
+           bleConnected ? 1U : 0U, wifiSnifferActive ? 1U : 0U,
+           ROADLENS_FIRMWARE_VERSION, ROADLENS_CHIP_FAMILY, otaInProgress ? 1U : 0U,
+           otaTargetVersion.c_str(), static_cast<unsigned>(activeSignatureCount()),
+           activeSignatureVersion(), activeSignatureSource());
+  emitLine(String(core));
+
+  char metrics[256];
+  snprintf(metrics, sizeof(metrics),
+           "{\"t\":\"m\",\"n\":%lu,\"f\":%lu,\"m\":%lu,\"x\":%lu," 
+           "\"w\":%lu,\"k\":%lu,\"q\":%lu}\n",
+           static_cast<unsigned long>(detectionCount), static_cast<unsigned long>(wifiFramesSeen),
+           static_cast<unsigned long>(mgmtFramesSeen), static_cast<unsigned long>(dataFramesSeen),
            static_cast<unsigned long>(wildcardProbesSeen),
-           static_cast<unsigned long>(candidateFramesSeen),
-           static_cast<unsigned long>(queueDrops), ROADLENS_FIRMWARE_VERSION,
-           ROADLENS_CHIP_FAMILY, otaInProgress ? "true" : "false",
-           otaTargetVersion.c_str(), activeSignatureVersion(),
-           activeSignatureSource());
-  emitLine(String(json));
+           static_cast<unsigned long>(candidateFramesSeen), static_cast<unsigned long>(queueDrops));
+  emitLine(String(metrics));
 }
 
 static void emitDetection(const DetectionEvent &event) {
@@ -754,17 +745,14 @@ static void emitDetection(const DetectionEvent &event) {
 
   const String escapedLabel = jsonEscape(String(event.label));
   const String escapedSsid = jsonEscape(String(event.ssid));
-  char json[520];
+  char json[256];
   snprintf(json, sizeof(json),
-           "{\"type\":\"detection\",\"source\":\"wifi\",\"detector\":\"%s\","
-           "\"mac\":\"%s\",\"ssid\":\"%s\",\"role\":\"%s\",\"label\":\"%s\","
-           "\"rssi\":%d,\"channel\":%u,\"frame_type\":%u,"
-           "\"frame_subtype\":%u,\"wildcard_probe\":%s,"
-           "\"confidence\":%u,\"uptime_ms\":%lu}\n",
-           deviceName, event.mac, escapedSsid.c_str(), event.role,
+           "{\"t\":\"d\",\"m\":\"%s\",\"s\":\"%s\",\"r\":\"%s\",\"l\":\"%s\"," 
+           "\"p\":%d,\"c\":%u,\"ft\":%u,\"fs\":%u,\"w\":%u,\"q\":%u,\"u\":%lu}\n",
+           event.mac, escapedSsid.c_str(), event.role,
            escapedLabel.c_str(), event.rssi,
            event.channel, event.frameType, event.frameSubtype,
-           event.wildcardProbe ? "true" : "false", event.confidence,
+           event.wildcardProbe ? 1U : 0U, event.confidence,
            static_cast<unsigned long>(event.uptimeMs));
   emitLine(String(json));
 
