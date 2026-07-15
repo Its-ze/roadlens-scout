@@ -12,6 +12,9 @@ Outgoing JSON records are queued and sent as paced 180-byte BLE notifications.
 The app buffers those chunks until the newline terminator before parsing the
 complete record.
 
+The `ping` command returns the compact `{"type":"pong"}` record and can be used
+to verify notification delivery before starting the Wi-Fi monitor.
+
 Firmware `0.1.18` scans 2.4 GHz channels 1-11, uses the public Flock-style
 Wi-Fi signature set, detects empty probe requests, and parses Wi-Fi management
 SSIDs for Flock-style provisioning/battery/module names. It reports raw scan

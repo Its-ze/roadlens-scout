@@ -33,7 +33,7 @@ static constexpr uint32_t CHANNEL_DWELL_MS = 180;
 static constexpr uint32_t DUPLICATE_SUPPRESS_MS = 15000;
 static constexpr uint32_t STATUS_INTERVAL_MS = 5000;
 static constexpr size_t BLE_NOTIFY_CHUNK_BYTES = 180;
-static constexpr uint32_t BLE_NOTIFY_INTERVAL_MS = 20;
+static constexpr uint32_t BLE_NOTIFY_INTERVAL_MS = 100;
 static constexpr size_t BLE_MESSAGE_MAX_BYTES = 900;
 static constexpr uint32_t OTA_WIFI_TIMEOUT_MS = 25000;
 static constexpr uint32_t OTA_HTTP_IDLE_TIMEOUT_MS = 45000;
@@ -1146,7 +1146,7 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
     lowerCommand.toLowerCase();
 
     if (lowerCommand == "ping") {
-      emitStatus("pong");
+      emitLine("{\"type\":\"pong\"}\n");
     } else if (lowerCommand == "status") {
       emitStatus("command");
     } else if (lowerCommand == "start-scan") {
