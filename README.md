@@ -182,7 +182,7 @@ connect.
 
 ## In-App GitHub Updates
 
-The Android app has an `Update` button. It checks the latest GitHub release for the configured repo, finds the best `.apk` asset, compares the release tag/name version against the installed app version, downloads the APK, and opens Android's installer.
+The Android app checks the verified GitHub Pages release manifest at startup and from the `Update` button. It compares the published version with the installed app, then verifies the APK's exact size and SHA-256 before opening Android's installer.
 
 Default update repo:
 
