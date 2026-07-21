@@ -89,7 +89,7 @@ const DEFAULT_RAVEN_SERVICE_UUIDS = [
 type RoadLensUpdaterPlugin = {
   canInstallPackages(): Promise<{ allowed: boolean }>;
   openInstallSettings(): Promise<void>;
-  downloadAndInstall(options: { url: string; fileName: string }): Promise<{
+  downloadAndInstall(options: { url: string; fileName: string; expectedSha256: string; expectedBytes: number }): Promise<{
     fileName: string;
     bytes: number;
   }>;
@@ -254,6 +254,12 @@ type SiteMetaFirmwareBuild = {
 
 type SiteMeta = {
   version: string;
+  apk: {
+    path: string;
+    asset: string;
+    bytes: number;
+    sha256: string;
+  };
   firmware: {
     builds: SiteMetaFirmwareBuild[];
   };
@@ -805,6 +811,7 @@ void startLocationWatch();
 void refreshWifiReadout({ quiet: true });
 void refreshSignatureFeed({ quiet: true });
 void refreshCameraSeedFeed({ quiet: true });
+window.setTimeout(() => void checkForUpdate(), 2500);
 
 function setMobileTab(tab: string) {
   shell.dataset.mobileTab = tab;
@@ -3025,28 +3032,23 @@ async function checkForUpdate() {
   updateButtons.forEach((button) => {
     button.disabled = true;
   });
-  setSensorState('busy', 'Checking GitHub release');
+  setSensorState('busy', 'Checking verified release manifest');
 
   try {
-    const release = await fetchLatestRelease();
-    const apk = pickApkAsset(release.assets);
-    const latestVersion = extractVersion(release.tag_name) ?? extractVersion(release.name ?? '');
-    const hasNewerVersion = latestVersion ? compareVersions(latestVersion, APP_VERSION) > 0 : true;
-
-    if (!apk) {
-      setSensorState('error', 'Latest GitHub release has no APK asset');
-      return;
-    }
+    const meta = await fetchSiteMeta();
+    const apk = meta.apk;
+    const latestVersion = meta.version;
+    const hasNewerVersion = compareVersions(latestVersion, APP_VERSION) > 0;
 
     if (!hasNewerVersion) {
       setSensorState('online', `${APP_NAME} ${APP_VERSION} is current`);
       return;
     }
 
-    const label = latestVersion ? `${APP_NAME} ${latestVersion}` : release.name || release.tag_name;
+    const label = `${APP_NAME} ${latestVersion}`;
     const ok = confirm(
-      `Install ${label} from GitHub?\n\n${apk.name}` +
-        `${apk.size ? ` (${formatBytes(apk.size)})` : ''}`,
+      `Install verified ${label}?\n\n${apk.asset}` +
+        `${apk.bytes ? ` (${formatBytes(apk.bytes)})` : ''}`,
     );
     if (!ok) {
       setSensorState('online', 'Update canceled');
@@ -3054,8 +3056,8 @@ async function checkForUpdate() {
     }
 
     if (!Capacitor.isNativePlatform()) {
-      window.open(release.html_url ?? apk.browser_download_url, '_blank', 'noopener');
-      setSensorState('online', 'Opened GitHub release');
+      window.open(apk.path, '_blank', 'noopener');
+      setSensorState('online', 'Opened verified APK download');
       return;
     }
 
@@ -3066,10 +3068,12 @@ async function checkForUpdate() {
       return;
     }
 
-    setSensorState('busy', `Downloading ${apk.name}`);
+    setSensorState('busy', `Downloading and verifying ${apk.asset}`);
     const result = await RoadLensUpdater.downloadAndInstall({
-      url: apk.browser_download_url,
-      fileName: apk.name,
+      url: apk.path,
+      fileName: apk.asset,
+      expectedSha256: apk.sha256,
+      expectedBytes: apk.bytes,
     });
     setSensorState('online', `Installer opened (${formatBytes(result.bytes)})`);
   } catch (error) {
@@ -3079,32 +3083,6 @@ async function checkForUpdate() {
       button.disabled = false;
     });
   }
-}
-
-async function fetchLatestRelease(): Promise<GitHubRelease> {
-  const response = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`GitHub update unavailable (${response.status})`);
-  }
-  return (await response.json()) as GitHubRelease;
-}
-
-function pickApkAsset(assets: GitHubReleaseAsset[]) {
-  const apkAssets = assets.filter((asset) => asset.name.toLowerCase().endsWith('.apk'));
-  return apkAssets.sort((a, b) => assetScore(b) - assetScore(a))[0] ?? null;
-}
-
-function assetScore(asset: GitHubReleaseAsset) {
-  const name = asset.name.toLowerCase();
-  let score = 0;
-  if (name.includes('roadlens')) score += 10;
-  if (name.includes('release')) score += 4;
-  if (name.includes('debug')) score -= 2;
-  return score;
 }
 
 function extractVersion(value: string) {

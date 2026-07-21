@@ -18,6 +18,7 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.MessageDigest;
 import java.util.Locale;
 
 @CapacitorPlugin(name = "RoadLensUpdater")
@@ -47,12 +48,18 @@ public class RoadLensUpdaterPlugin extends Plugin {
     public void downloadAndInstall(PluginCall call) {
         String url = call.getString("url");
         String fileName = sanitizeFileName(call.getString("fileName", "roadlens-update.apk"));
+        String expectedSha256 = call.getString("expectedSha256", "").trim().toLowerCase(Locale.US);
+        long expectedBytes = call.getLong("expectedBytes", 0L);
         if (url == null || url.trim().isEmpty()) {
             call.reject("Missing update URL");
             return;
         }
         if (!fileName.toLowerCase(Locale.US).endsWith(".apk")) {
             fileName = fileName + ".apk";
+        }
+        if (!expectedSha256.matches("[0-9a-f]{64}") || expectedBytes <= 0 || expectedBytes > MAX_APK_BYTES) {
+            call.reject("Update manifest verification data is invalid");
+            return;
         }
         if (!canRequestPackageInstalls()) {
             call.reject("Install permission is not granted");
@@ -68,7 +75,7 @@ public class RoadLensUpdaterPlugin extends Plugin {
                 }
 
                 File apkFile = new File(updatesDir, finalFileName);
-                long bytes = downloadApk(url, apkFile);
+                long bytes = downloadApk(url, apkFile, expectedSha256, expectedBytes);
                 openInstaller(apkFile);
 
                 JSObject result = new JSObject();
@@ -86,7 +93,7 @@ public class RoadLensUpdaterPlugin extends Plugin {
             getContext().getPackageManager().canRequestPackageInstalls();
     }
 
-    private long downloadApk(String sourceUrl, File outputFile) throws Exception {
+    private long downloadApk(String sourceUrl, File outputFile, String expectedSha256, long expectedBytes) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL(sourceUrl).openConnection();
         connection.setConnectTimeout(15000);
         connection.setReadTimeout(45000);
@@ -99,6 +106,7 @@ public class RoadLensUpdaterPlugin extends Plugin {
         }
 
         long total = 0;
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
         byte[] buffer = new byte[8192];
         try (
             InputStream input = connection.getInputStream();
@@ -107,19 +115,29 @@ public class RoadLensUpdaterPlugin extends Plugin {
             int read;
             while ((read = input.read(buffer)) != -1) {
                 total += read;
-                if (total > MAX_APK_BYTES) {
-                    throw new IllegalStateException("APK is too large");
+                if (total > MAX_APK_BYTES || total > expectedBytes) {
+                    throw new IllegalStateException("APK size does not match the update manifest");
                 }
+                digest.update(buffer, 0, read);
                 output.write(buffer, 0, read);
             }
         } finally {
             connection.disconnect();
         }
 
-        if (total <= 0) {
-            throw new IllegalStateException("Downloaded APK was empty");
+        if (total != expectedBytes) throw new IllegalStateException("APK size does not match the update manifest");
+        String actualSha256 = hex(digest.digest());
+        if (!MessageDigest.isEqual(actualSha256.getBytes(), expectedSha256.getBytes())) {
+            outputFile.delete();
+            throw new IllegalStateException("APK SHA-256 verification failed");
         }
         return total;
+    }
+
+    private String hex(byte[] bytes) {
+        StringBuilder value = new StringBuilder(bytes.length * 2);
+        for (byte item : bytes) value.append(String.format(Locale.US, "%02x", item));
+        return value.toString();
     }
 
     private void openInstaller(File apkFile) {
