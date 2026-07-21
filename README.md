@@ -182,7 +182,7 @@ connect.
 
 ## In-App GitHub Updates
 
-The Android app checks the verified GitHub Pages release manifest at startup and from the `Update` button. It compares the published version with the installed app, then verifies the APK's exact size and SHA-256 before opening Android's installer.
+The Android app checks the verified ITSZ release manifest at startup and from the `Update` button. It compares the published version with the installed app, then verifies the APK's exact size and SHA-256 before opening Android's installer.
 
 Default update repo:
 

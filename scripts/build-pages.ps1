@@ -24,7 +24,7 @@ $BrandMark = Join-Path $Root "assets\brand\roadlens-mark.svg"
 $SignatureSource = Join-Path $Root "data\signatures.json"
 $CameraSeedSource = Join-Path $Root "data\camera-seeds.json"
 $ApkName = "roadlens-scout-v$Version-debug.apk"
-$ApkReleaseUrl = "https://github.com/Its-ze/roadlens-scout/releases/download/v$Version/$ApkName"
+$ApkReleaseUrl = "https://itsz.studio/downloads/roadlens/$ApkName"
 
 foreach ($required in @($FlasherSource, (Join-Path $FlasherSource "manifest.json"), (Join-Path $FlasherSource "firmware"), $ApkPath, $BrandMark, $SignatureSource, $CameraSeedSource)) {
   if (-not (Test-Path -LiteralPath $required)) {
