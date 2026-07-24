@@ -1,7 +1,7 @@
 {
     "name":  "RoadLens Scout",
     "version":  "0.1.19",
-    "generatedAt":  "2026-07-21T15:55:49Z",
+    "generatedAt":  "2026-07-24T04:45:31Z",
     "apk":  {
                 "path":  "https://itsz.studio/downloads/roadlens/roadlens-scout-v0.1.19-debug.apk",
                 "asset":  "roadlens-scout-v0.1.19-debug.apk",
@@ -36,9 +36,9 @@
                  },
     "signatures":  {
                        "path":  "signatures.json",
-                       "version":  "2026.07.21.3975d365",
-                       "bytes":  9852,
-                       "sha256":  "db3a0bb9762c21ad3b3afc3c8052f0f7a5fa71e9f93df57d5f715000237d49fb",
+                       "version":  "2026.07.23.3975d365",
+                       "bytes":  9447,
+                       "sha256":  "e5a77645169ec82145f6eab9e4ca60ef4ca74e875e4d9af20b636f09e5b50ffa",
                        "wifiPrefixes":  42,
                        "blePrefixes":  42,
                        "bleNamePatterns":  4,
@@ -49,8 +49,8 @@
     "cameraSeeds":  {
                         "path":  "camera-seeds.json",
                         "version":  "2026.07.21.fce859da",
-                        "bytes":  21297503,
-                        "sha256":  "56b582d6bdf50a44a18ffaa20b44163ea205dea039db788dfd40b39d517182ea",
+                        "bytes":  21297917,
+                        "sha256":  "8306852149da337283b44a93babcb65e38fef153fb75050c419172ef16471566",
                         "points":  98546,
                         "sources":  1
                     }

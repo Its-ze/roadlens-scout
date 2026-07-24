@@ -41,6 +41,11 @@ Copy-Item -LiteralPath $BrandMark -Destination (Join-Path $DocsAssets "roadlens-
 Copy-Item -LiteralPath $SignatureSource -Destination (Join-Path $DocsDir "signatures.json") -Force
 Copy-Item -LiteralPath $CameraSeedSource -Destination (Join-Path $DocsDir "camera-seeds.json") -Force
 
+foreach ($jsonPath in @((Join-Path $DocsDir "signatures.json"), (Join-Path $DocsDir "camera-seeds.json"))) {
+  $normalized = (Get-Content -LiteralPath $jsonPath -Raw).Replace("`r`n", "`n").Replace("`r", "`n")
+  [System.IO.File]::WriteAllText($jsonPath, $normalized, [System.Text.UTF8Encoding]::new($false))
+}
+
 $apkHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ApkPath).Hash.ToLowerInvariant()
 $apkItem = Get-Item -LiteralPath $ApkPath
 $signaturePath = Join-Path $DocsDir "signatures.json"

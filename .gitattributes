@@ -1,0 +1,2 @@
+docs/*.json text eol=lf
+docs/downloads/*.txt text eol=lf
