@@ -95,6 +95,13 @@
         gap: 12px;
       }
 
+      .top-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
       .brand {
         display: flex;
         align-items: center;
@@ -366,8 +373,10 @@
           flex-direction: column;
         }
 
-        .topbar > a {
+        .top-actions {
           width: 100%;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
         }
 
         .actions,
@@ -399,7 +408,10 @@
             <p>ESP32 sensor flasher and Android field app</p>
           </div>
         </div>
-        <a href="https://github.com/Its-ze/roadlens-scout">GitHub</a>
+        <nav class="top-actions" aria-label="Site navigation">
+          <a href="https://itsz.studio/app-store/">ITSZ App Store</a>
+          <a href="https://github.com/Its-ze/roadlens-scout">GitHub</a>
+        </nav>
       </header>
 
       <section class="workspace">
