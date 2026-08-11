@@ -6,13 +6,15 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <ctype.h>
+#include <esp_idf_version.h>
+#include <esp_now.h>
 #include <esp_wifi.h>
 #include <mbedtls/sha256.h>
 
 #include "signatures.h"
 
 #ifndef ROADLENS_FIRMWARE_VERSION
-#define ROADLENS_FIRMWARE_VERSION "0.1.18"
+#define ROADLENS_FIRMWARE_VERSION "0.1.20"
 #endif
 
 #ifndef ROADLENS_CHIP_FAMILY
@@ -32,6 +34,15 @@ static constexpr uint8_t LED_PIN = 2;
 static constexpr uint32_t CHANNEL_DWELL_MS = 180;
 static constexpr uint32_t DUPLICATE_SUPPRESS_MS = 15000;
 static constexpr uint32_t STATUS_INTERVAL_MS = 5000;
+static constexpr uint8_t CLUSTER_CONTROL_CHANNEL = 6;
+static constexpr uint8_t CLUSTER_SCAN_LANES = 4;
+static constexpr uint32_t CLUSTER_CYCLE_MS = 1800;
+static constexpr uint32_t CLUSTER_CONTROL_WINDOW_MS = 320;
+static constexpr uint32_t CLUSTER_BEACON_INTERVAL_MS = 90;
+static constexpr uint32_t CLUSTER_HELLO_INTERVAL_MS = 900;
+static constexpr uint32_t CLUSTER_LEADER_TIMEOUT_MS = 6500;
+static constexpr uint32_t CLUSTER_NODE_TIMEOUT_MS = 9000;
+static constexpr size_t MAX_CLUSTER_NODES = 8;
 static constexpr size_t BLE_NOTIFY_CHUNK_BYTES = 220;
 static constexpr uint32_t BLE_NOTIFY_INTERVAL_MS = 100;
 static constexpr size_t BLE_MESSAGE_MAX_BYTES = 256;
@@ -67,8 +78,47 @@ struct BleMessage {
   uint8_t bytes[BLE_MESSAGE_MAX_BYTES];
 };
 
+enum ClusterPacketKind : uint8_t {
+  CLUSTER_BEACON = 1,
+  CLUSTER_HELLO = 2,
+  CLUSTER_DETECTION = 3,
+  CLUSTER_STOP = 4,
+};
+
+struct __attribute__((packed)) ClusterPacket {
+  uint32_t magic;
+  uint8_t protocolVersion;
+  uint8_t kind;
+  uint8_t sourceMac[6];
+  uint32_t sequence;
+  uint32_t uptimeMs;
+  uint8_t scanActive;
+  uint8_t lane;
+  int8_t rssi;
+  uint8_t channel;
+  uint8_t frameType;
+  uint8_t frameSubtype;
+  uint8_t confidence;
+  uint8_t wildcardProbe;
+  char mac[18];
+  char role[10];
+  char label[32];
+  char ssid[33];
+};
+
+static_assert(sizeof(ClusterPacket) <= ESP_NOW_MAX_DATA_LEN,
+              "RoadLens cluster packet exceeds ESP-NOW payload size");
+
+struct ClusterNode {
+  uint8_t mac[6];
+  uint8_t lane;
+  uint32_t lastSeenMs;
+  bool used;
+};
+
 static QueueHandle_t detectionQueue = nullptr;
 static QueueHandle_t bleMessageQueue = nullptr;
+static QueueHandle_t clusterRxQueue = nullptr;
 static NimBLECharacteristic *notifyCharacteristic = nullptr;
 static BleMessage currentBleMessage = {};
 static size_t currentBleMessageOffset = 0;
@@ -79,6 +129,7 @@ static bool wifiSnifferActive = false;
 static bool snifferStartRequested = false;
 static uint32_t snifferStartAtMs = 0;
 static uint8_t channelIndex = 0;
+static uint8_t currentRadioChannel = CLUSTER_CONTROL_CHANNEL;
 static uint32_t lastChannelHopMs = 0;
 static uint32_t lastStatusMs = 0;
 static uint32_t detectionCount = 0;
@@ -105,11 +156,119 @@ static size_t stagedSignatureCount = 0;
 static char dynamicSignatureVersion[25] = "";
 static char stagedSignatureVersion[25] = "";
 static bool signatureApplyRequested = false;
+static constexpr uint32_t CLUSTER_MAGIC = 0x524C5343;  // RLSC
+static const uint8_t CLUSTER_BROADCAST_MAC[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+static uint8_t selfMac[6] = {};
+static char clusterNodeId[7] = "000000";
+static uint8_t clusterLane = 0;
+static uint8_t clusterLeaderMac[6] = {};
+static bool clusterRadioReady = false;
+static bool clusterGateway = false;
+static bool clusterControlWindow = true;
+static bool clusterScanActive = false;
+static uint32_t clusterSequence = 0;
+static uint32_t clusterWindowStartedMs = 0;
+static uint32_t clusterNextWindowMs = 0;
+static uint32_t clusterLeaderLastSeenMs = 0;
+static uint32_t lastClusterBeaconMs = 0;
+static uint32_t lastClusterHelloMs = 0;
+static ClusterNode clusterNodes[MAX_CLUSTER_NODES] = {};
 
 static void setupSniffer();
 static void stopSniffer();
 static void performOtaUpdate();
 static void applyStagedSignatures();
+static void setupClusterRadio();
+static void serviceCluster(uint32_t nowMs);
+static void emitRemoteDetection(const ClusterPacket &packet);
+static void emitStatus(const char *reason);
+
+static void setRadioChannel(uint8_t channel) {
+  if (!clusterRadioReady || channel < 1 || channel > 11) {
+    return;
+  }
+  esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+  currentRadioChannel = channel;
+}
+
+static void fillClusterPacket(ClusterPacket &packet, ClusterPacketKind kind) {
+  memset(&packet, 0, sizeof(packet));
+  packet.magic = CLUSTER_MAGIC;
+  packet.protocolVersion = 1;
+  packet.kind = kind;
+  memcpy(packet.sourceMac, selfMac, sizeof(packet.sourceMac));
+  packet.sequence = ++clusterSequence;
+  packet.uptimeMs = millis();
+  packet.scanActive = clusterScanActive ? 1U : 0U;
+  packet.lane = clusterLane;
+}
+
+static bool sendClusterPacket(const ClusterPacket &packet) {
+  if (!clusterRadioReady || !clusterControlWindow) {
+    return false;
+  }
+  return esp_now_send(CLUSTER_BROADCAST_MAC,
+                      reinterpret_cast<const uint8_t *>(&packet),
+                      sizeof(packet)) == ESP_OK;
+}
+
+static void queueClusterPacket(const uint8_t *data, int length) {
+  if (data == nullptr || length != static_cast<int>(sizeof(ClusterPacket)) ||
+      clusterRxQueue == nullptr) {
+    return;
+  }
+  ClusterPacket packet = {};
+  memcpy(&packet, data, sizeof(packet));
+  if (packet.magic != CLUSTER_MAGIC || packet.protocolVersion != 1 ||
+      memcmp(packet.sourceMac, selfMac, sizeof(selfMac)) == 0) {
+    return;
+  }
+  xQueueSend(clusterRxQueue, &packet, 0);
+}
+
+#if ESP_IDF_VERSION_MAJOR >= 5
+static void onClusterReceive(const esp_now_recv_info_t *, const uint8_t *data,
+                             int length) {
+  queueClusterPacket(data, length);
+}
+#else
+static void onClusterReceive(const uint8_t *, const uint8_t *data, int length) {
+  queueClusterPacket(data, length);
+}
+#endif
+
+static void setupClusterRadio() {
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(false, false);
+  esp_wifi_get_mac(WIFI_IF_STA, selfMac);
+  snprintf(clusterNodeId, sizeof(clusterNodeId), "%02X%02X%02X", selfMac[3],
+           selfMac[4], selfMac[5]);
+  clusterLane = selfMac[5] % CLUSTER_SCAN_LANES;
+  esp_wifi_set_channel(CLUSTER_CONTROL_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  currentRadioChannel = CLUSTER_CONTROL_CHANNEL;
+
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("RoadLens cluster: ESP-NOW initialization failed");
+    return;
+  }
+  esp_now_register_recv_cb(onClusterReceive);
+
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, CLUSTER_BROADCAST_MAC, sizeof(peer.peer_addr));
+  peer.channel = 0;
+  peer.encrypt = false;
+  if (!esp_now_is_peer_exist(CLUSTER_BROADCAST_MAC) &&
+      esp_now_add_peer(&peer) != ESP_OK) {
+    Serial.println("RoadLens cluster: broadcast peer setup failed");
+    esp_now_deinit();
+    return;
+  }
+
+  clusterRadioReady = true;
+  clusterControlWindow = true;
+  clusterWindowStartedMs = millis();
+  clusterNextWindowMs = clusterWindowStartedMs + CLUSTER_CYCLE_MS;
+}
 
 static void formatMac(const uint8_t *mac, char *out, size_t outLen) {
   snprintf(out, outLen, "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1],
@@ -721,16 +880,34 @@ static void emitSignatureStatus(const char *state, const String &detail,
 }
 
 static void emitStatus(const char *reason) {
+  size_t activeClusterNodes = 1;
+  const uint32_t nowMs = millis();
+  if (clusterGateway) {
+    for (const ClusterNode &node : clusterNodes) {
+      if (node.used && nowMs - node.lastSeenMs <= CLUSTER_NODE_TIMEOUT_MS) {
+        activeClusterNodes++;
+      }
+    }
+  }
+  const char *clusterRole = clusterGateway
+                                ? "gateway"
+                                : (clusterLeaderLastSeenMs > 0 &&
+                                           nowMs - clusterLeaderLastSeenMs <= CLUSTER_LEADER_TIMEOUT_MS
+                                       ? "worker"
+                                       : "idle");
   char core[384];
   snprintf(core, sizeof(core),
            "{\"t\":\"s\",\"d\":\"%s\",\"r\":\"%s\",\"u\":%lu,\"c\":%u," 
            "\"b\":%u,\"a\":%u,\"v\":\"%s\",\"h\":\"%s\",\"o\":1,\"i\":%u," 
-           "\"ov\":\"%s\",\"g\":%u,\"sv\":\"%s\",\"ss\":\"%s\",\"sy\":1}\n",
-           deviceName, reason, static_cast<unsigned long>(millis()), CHANNELS[channelIndex],
+           "\"ov\":\"%s\",\"g\":%u,\"sv\":\"%s\",\"ss\":\"%s\",\"sy\":1," 
+           "\"cr\":\"%s\",\"cn\":%u,\"ci\":\"%s\",\"cl\":%u}\n",
+           deviceName, reason, static_cast<unsigned long>(nowMs), currentRadioChannel,
            bleConnected ? 1U : 0U, wifiSnifferActive ? 1U : 0U,
            ROADLENS_FIRMWARE_VERSION, ROADLENS_CHIP_FAMILY, otaInProgress ? 1U : 0U,
            otaTargetVersion.c_str(), static_cast<unsigned>(activeSignatureCount()),
-           activeSignatureVersion(), activeSignatureSource());
+           activeSignatureVersion(), activeSignatureSource(), clusterRole,
+           static_cast<unsigned>(activeClusterNodes), clusterNodeId,
+           static_cast<unsigned>(clusterLane));
   emitLine(String(core));
 
   char metrics[256];
@@ -746,28 +923,184 @@ static void emitStatus(const char *reason) {
 
 static void emitDetection(const DetectionEvent &event) {
   detectionCount++;
-  digitalWrite(LED_PIN, HIGH);
 
   const String escapedLabel = jsonEscape(String(event.label));
   const String escapedSsid = jsonEscape(String(event.ssid));
   char json[256];
   snprintf(json, sizeof(json),
            "{\"t\":\"d\",\"m\":\"%s\",\"s\":\"%s\",\"r\":\"%s\",\"l\":\"%s\"," 
-           "\"p\":%d,\"c\":%u,\"ft\":%u,\"fs\":%u,\"w\":%u,\"q\":%u,\"u\":%lu}\n",
+           "\"p\":%d,\"c\":%u,\"ft\":%u,\"fs\":%u,\"w\":%u,\"q\":%u,\"u\":%lu," 
+           "\"n\":\"%s\"}\n",
            event.mac, escapedSsid.c_str(), event.role,
            escapedLabel.c_str(), event.rssi,
            event.channel, event.frameType, event.frameSubtype,
            event.wildcardProbe ? 1U : 0U, event.confidence,
-           static_cast<unsigned long>(event.uptimeMs));
+           static_cast<unsigned long>(event.uptimeMs), clusterNodeId);
   emitLine(String(json));
+}
 
-  delay(18);
-  digitalWrite(LED_PIN, LOW);
+static void emitRemoteDetection(const ClusterPacket &packet) {
+  detectionCount++;
+  char remoteNodeId[7];
+  snprintf(remoteNodeId, sizeof(remoteNodeId), "%02X%02X%02X", packet.sourceMac[3],
+           packet.sourceMac[4], packet.sourceMac[5]);
+  const String escapedLabel = jsonEscape(String(packet.label));
+  const String escapedSsid = jsonEscape(String(packet.ssid));
+  char json[280];
+  snprintf(json, sizeof(json),
+           "{\"t\":\"d\",\"m\":\"%s\",\"s\":\"%s\",\"r\":\"%s\",\"l\":\"%s\"," 
+           "\"p\":%d,\"c\":%u,\"ft\":%u,\"fs\":%u,\"w\":%u,\"q\":%u,\"u\":%lu," 
+           "\"n\":\"%s\"}\n",
+           packet.mac, escapedSsid.c_str(), packet.role, escapedLabel.c_str(),
+           packet.rssi, packet.channel, packet.frameType, packet.frameSubtype,
+           packet.wildcardProbe, packet.confidence,
+           static_cast<unsigned long>(packet.uptimeMs), remoteNodeId);
+  emitLine(String(json));
+}
+
+static void noteClusterNode(const ClusterPacket &packet, uint32_t nowMs) {
+  ClusterNode *available = nullptr;
+  ClusterNode *oldest = &clusterNodes[0];
+  for (ClusterNode &node : clusterNodes) {
+    if (node.used && memcmp(node.mac, packet.sourceMac, sizeof(node.mac)) == 0) {
+      node.lastSeenMs = nowMs;
+      node.lane = packet.lane;
+      return;
+    }
+    if (!node.used && available == nullptr) {
+      available = &node;
+    }
+    if (node.lastSeenMs < oldest->lastSeenMs) {
+      oldest = &node;
+    }
+  }
+  ClusterNode *node = available != nullptr ? available : oldest;
+  memcpy(node->mac, packet.sourceMac, sizeof(node->mac));
+  node->lane = packet.lane;
+  node->lastSeenMs = nowMs;
+  node->used = true;
+}
+
+static void broadcastClusterState(ClusterPacketKind kind) {
+  ClusterPacket packet = {};
+  fillClusterPacket(packet, kind);
+  sendClusterPacket(packet);
+}
+
+static void sendClusterDetection(const DetectionEvent &event) {
+  ClusterPacket packet = {};
+  fillClusterPacket(packet, CLUSTER_DETECTION);
+  packet.rssi = event.rssi;
+  packet.channel = event.channel;
+  packet.frameType = event.frameType;
+  packet.frameSubtype = event.frameSubtype;
+  packet.confidence = event.confidence;
+  packet.wildcardProbe = event.wildcardProbe ? 1U : 0U;
+  strlcpy(packet.mac, event.mac, sizeof(packet.mac));
+  strlcpy(packet.role, event.role, sizeof(packet.role));
+  strlcpy(packet.label, event.label, sizeof(packet.label));
+  strlcpy(packet.ssid, event.ssid, sizeof(packet.ssid));
+  sendClusterPacket(packet);
+}
+
+static void enterClusterControlWindow(uint32_t nowMs) {
+  clusterControlWindow = true;
+  clusterWindowStartedMs = nowMs;
+  clusterNextWindowMs = nowMs + CLUSTER_CYCLE_MS;
+  setRadioChannel(CLUSTER_CONTROL_CHANNEL);
+  if (clusterGateway) {
+    broadcastClusterState(clusterScanActive ? CLUSTER_BEACON : CLUSTER_STOP);
+    lastClusterBeaconMs = nowMs;
+  } else {
+    broadcastClusterState(CLUSTER_HELLO);
+    lastClusterHelloMs = nowMs;
+  }
+}
+
+static void leaveClusterControlWindow(uint32_t nowMs) {
+  clusterControlWindow = false;
+  channelIndex = clusterLane % (sizeof(CHANNELS) / sizeof(CHANNELS[0]));
+  setRadioChannel(CHANNELS[channelIndex]);
+  lastChannelHopMs = nowMs;
+}
+
+static void processClusterPackets(uint32_t nowMs) {
+  ClusterPacket packet = {};
+  while (clusterRxQueue != nullptr &&
+         xQueueReceive(clusterRxQueue, &packet, 0) == pdTRUE) {
+    if (clusterGateway) {
+      if (packet.kind == CLUSTER_HELLO || packet.kind == CLUSTER_DETECTION) {
+        noteClusterNode(packet, nowMs);
+      }
+      if (packet.kind == CLUSTER_DETECTION && clusterScanActive) {
+        emitRemoteDetection(packet);
+      }
+      continue;
+    }
+
+    if (packet.kind == CLUSTER_BEACON || packet.kind == CLUSTER_STOP) {
+      memcpy(clusterLeaderMac, packet.sourceMac, sizeof(clusterLeaderMac));
+      clusterLeaderLastSeenMs = nowMs;
+      clusterScanActive = packet.kind == CLUSTER_BEACON && packet.scanActive != 0;
+      snifferStartRequested = clusterScanActive;
+      clusterControlWindow = true;
+      clusterWindowStartedMs = nowMs;
+      clusterNextWindowMs = nowMs + CLUSTER_CYCLE_MS;
+      setRadioChannel(CLUSTER_CONTROL_CHANNEL);
+      if (clusterScanActive && !wifiSnifferActive && !otaInProgress) {
+        setupSniffer();
+      } else if (!clusterScanActive) {
+        stopSniffer();
+      }
+      broadcastClusterState(CLUSTER_HELLO);
+      lastClusterHelloMs = nowMs;
+    }
+  }
+}
+
+static void serviceCluster(uint32_t nowMs) {
+  if (!clusterRadioReady || otaInProgress) {
+    return;
+  }
+  processClusterPackets(nowMs);
+
+  if (!clusterGateway && clusterLeaderLastSeenMs > 0 &&
+      nowMs - clusterLeaderLastSeenMs > CLUSTER_LEADER_TIMEOUT_MS) {
+    clusterLeaderLastSeenMs = 0;
+    clusterScanActive = false;
+    snifferStartRequested = false;
+    stopSniffer();
+    enterClusterControlWindow(nowMs);
+  }
+
+  if (clusterScanActive && !clusterControlWindow &&
+      static_cast<int32_t>(nowMs - clusterNextWindowMs) >= 0) {
+    enterClusterControlWindow(nowMs);
+  }
+
+  if (clusterControlWindow) {
+    if (clusterGateway && nowMs - lastClusterBeaconMs >= CLUSTER_BEACON_INTERVAL_MS) {
+      broadcastClusterState(clusterScanActive ? CLUSTER_BEACON : CLUSTER_STOP);
+      lastClusterBeaconMs = nowMs;
+    } else if (!clusterGateway && clusterLeaderLastSeenMs > 0 &&
+               nowMs - lastClusterHelloMs >= CLUSTER_HELLO_INTERVAL_MS) {
+      broadcastClusterState(CLUSTER_HELLO);
+      lastClusterHelloMs = nowMs;
+    }
+
+    if (clusterScanActive &&
+        nowMs - clusterWindowStartedMs >= CLUSTER_CONTROL_WINDOW_MS) {
+      leaveClusterControlWindow(nowMs);
+    }
+  }
 }
 
 class ServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer *, NimBLEConnInfo &) override {
     bleConnected = true;
+    clusterGateway = true;
+    clusterScanActive = false;
+    enterClusterControlWindow(millis());
     if (bleMessageQueue != nullptr) {
       xQueueReset(bleMessageQueue);
     }
@@ -787,6 +1120,10 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     snifferStartRequested = false;
     snifferStartAtMs = 0;
     stopSniffer();
+    clusterScanActive = false;
+    enterClusterControlWindow(millis());
+    broadcastClusterState(CLUSTER_STOP);
+    clusterGateway = false;
   }
 };
 
@@ -1144,11 +1481,16 @@ class CommandCallbacks : public NimBLECharacteristicCallbacks {
     } else if (lowerCommand == "start-scan") {
       snifferStartRequested = true;
       snifferStartAtMs = millis() + 1200;
+      clusterScanActive = true;
+      enterClusterControlWindow(millis());
       emitStatus("scan-starting");
     } else if (lowerCommand == "stop-scan") {
       snifferStartRequested = false;
       snifferStartAtMs = 0;
       stopSniffer();
+      clusterScanActive = false;
+      enterClusterControlWindow(millis());
+      broadcastClusterState(CLUSTER_STOP);
       emitStatus("scan-stopped");
     } else if (lowerCommand == "reset-counts") {
       detectionCount = 0;
@@ -1205,9 +1547,11 @@ static void stopSniffer() {
 
   esp_wifi_set_promiscuous(false);
   esp_wifi_set_promiscuous_rx_cb(nullptr);
-  WiFi.disconnect(false, false);
-  WiFi.mode(WIFI_OFF);
   wifiSnifferActive = false;
+  if (clusterRadioReady) {
+    setRadioChannel(CLUSTER_CONTROL_CHANNEL);
+    clusterControlWindow = true;
+  }
 }
 
 static void setupSniffer() {
@@ -1215,8 +1559,9 @@ static void setupSniffer() {
     return;
   }
 
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(false, false);
+  if (!clusterRadioReady) {
+    setupClusterRadio();
+  }
 
   wifi_promiscuous_filter_t filter = {};
   filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA;
@@ -1224,7 +1569,7 @@ static void setupSniffer() {
   esp_wifi_set_promiscuous(false);
   esp_wifi_set_promiscuous_filter(&filter);
   esp_wifi_set_promiscuous_rx_cb(&snifferCallback);
-  esp_wifi_set_channel(CHANNELS[channelIndex], WIFI_SECOND_CHAN_NONE);
+  setRadioChannel(clusterControlWindow ? CLUSTER_CONTROL_CHANNEL : CHANNELS[channelIndex]);
   esp_wifi_set_promiscuous(true);
   wifiSnifferActive = true;
 }
@@ -1239,6 +1584,8 @@ void setup() {
   loadDynamicSignatures();
   detectionQueue = xQueueCreate(24, sizeof(DetectionEvent));
   bleMessageQueue = xQueueCreate(BLE_MESSAGE_QUEUE_LENGTH, sizeof(BleMessage));
+  clusterRxQueue = xQueueCreate(24, sizeof(ClusterPacket));
+  setupClusterRadio();
   setupBle();
   emitStatus("boot");
 }
@@ -1266,16 +1613,32 @@ void loop() {
 
   drainBleNotifications(nowMs);
 
-  if (wifiSnifferActive && nowMs - lastChannelHopMs >= CHANNEL_DWELL_MS) {
-    channelIndex = (channelIndex + 1) % (sizeof(CHANNELS) / sizeof(CHANNELS[0]));
-    esp_wifi_set_channel(CHANNELS[channelIndex], WIFI_SECOND_CHAN_NONE);
-    lastChannelHopMs = nowMs;
+  DetectionEvent event = {};
+  size_t drainedDetections = 0;
+  while (detectionQueue != nullptr && drainedDetections < 6 &&
+         xQueueReceive(detectionQueue, &event, 0) == pdTRUE) {
+    if (clusterGateway) {
+      emitDetection(event);
+    } else if (clusterControlWindow && clusterLeaderLastSeenMs > 0) {
+      sendClusterDetection(event);
+      delay(4);
+    } else {
+      if (xQueueSendToFront(detectionQueue, &event, 0) != pdTRUE) {
+        queueDrops++;
+      }
+      break;
+    }
+    drainedDetections++;
   }
 
-  DetectionEvent event = {};
-  while (detectionQueue != nullptr &&
-         xQueueReceive(detectionQueue, &event, 0) == pdTRUE) {
-    emitDetection(event);
+  serviceCluster(nowMs);
+
+  if (wifiSnifferActive && !clusterControlWindow &&
+      nowMs - lastChannelHopMs >= CHANNEL_DWELL_MS) {
+    channelIndex = (channelIndex + CLUSTER_SCAN_LANES) %
+                   (sizeof(CHANNELS) / sizeof(CHANNELS[0]));
+    setRadioChannel(CHANNELS[channelIndex]);
+    lastChannelHopMs = nowMs;
   }
 
   if (nowMs - lastStatusMs >= STATUS_INTERVAL_MS) {

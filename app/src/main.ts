@@ -20,6 +20,7 @@ const COMMAND_UUID = '7d1d0003-52a1-4b81-9fd2-fd7ec3f50100';
 const STORAGE_KEY = 'roadlens.spots.v1';
 const FIELD_OBSERVATION_STORAGE_KEY = 'roadlens.field-observations.v1';
 const MAP_LEARNING_STORAGE_KEY = 'roadlens.map-learning.v1';
+const LAST_SENSOR_STORAGE_KEY = 'roadlens.last-sensor.v1';
 const APP_VERSION = __APP_VERSION__;
 const UPDATE_REPO = __GITHUB_REPO__;
 const APP_NAME = 'RoadLens Scout';
@@ -44,7 +45,9 @@ const COMMAND_WRITE_TIMEOUT_MS = 4500;
 const COMMAND_WRITE_FALLBACK_TIMEOUT_MS = 7500;
 const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_BASE_DELAY_MS = 1200;
-const MAX_SENSOR_CONNECTIONS = 2;
+const MAX_SENSOR_CONNECTIONS = 1;
+const AUTO_CONNECT_SCAN_MS = 6500;
+const AUTO_CONNECT_RETRY_MS = 15000;
 const MAX_FIELD_OBSERVATIONS = 2000;
 const CAMERA_SEED_RENDER_MIN_ZOOM = 11;
 const CAMERA_SEED_RENDER_LIMIT = 450;
@@ -177,6 +180,10 @@ type SensorStatus = {
   signature_version?: string;
   signature_source?: string;
   signature_sync_supported?: boolean;
+  cluster_role?: 'gateway' | 'worker' | 'idle';
+  cluster_nodes?: number;
+  cluster_id?: string;
+  cluster_lane?: number;
 };
 
 type SensorSession = {
@@ -432,6 +439,9 @@ let mapLearning: MapLearningState = readMapLearningState();
 let programmaticMapMoveUntil = 0;
 let lastUserMapInteractionAt = 0;
 let lastAutoCenterAt = 0;
+let autoConnectBusy = false;
+let autoConnectTimer: number | null = null;
+let autoConnectSuppressed = false;
 const sensorSessions: SensorSession[] = Array.from({ length: MAX_SENSOR_CONNECTIONS }, (_, slotId) => ({
   slotId,
   device: null,
@@ -442,7 +452,7 @@ const sensorSessions: SensorSession[] = Array.from({ length: MAX_SENSOR_CONNECTI
   reconnectTimer: null,
   intentionalDisconnect: false,
   connecting: false,
-  detail: 'Ready to pair',
+  detail: 'Searching automatically',
   signatureSyncBusy: false,
   signatureSyncedForKey: '',
   automaticSignatureSyncPausedUntil: 0,
@@ -811,7 +821,13 @@ void startLocationWatch();
 void refreshWifiReadout({ quiet: true });
 void refreshSignatureFeed({ quiet: true });
 void refreshCameraSeedFeed({ quiet: true });
+window.setTimeout(() => void autoConnectSensor(), 900);
 window.setTimeout(() => void checkForUpdate(), 2500);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    void autoConnectSensor();
+  }
+});
 
 function setMobileTab(tab: string) {
   shell.dataset.mobileTab = tab;
@@ -939,6 +955,74 @@ function isSensorSessionConnected(session: SensorSession, deviceId?: string) {
   return Boolean(session.device && (!deviceId || session.device.deviceId === deviceId));
 }
 
+function readLastSensorId() {
+  try {
+    return localStorage.getItem(LAST_SENSOR_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function rememberSensor(device: BleDevice) {
+  try {
+    localStorage.setItem(LAST_SENSOR_STORAGE_KEY, device.deviceId);
+  } catch {
+    // Remembering the gateway is optional; strongest-signal discovery remains available.
+  }
+}
+
+function scheduleAutoConnectRetry() {
+  if (autoConnectSuppressed || autoConnectTimer != null || connectedSensorSessions().length > 0) {
+    return;
+  }
+  autoConnectTimer = window.setTimeout(() => {
+    autoConnectTimer = null;
+    void autoConnectSensor();
+  }, AUTO_CONNECT_RETRY_MS);
+}
+
+async function autoConnectSensor() {
+  if (
+    !Capacitor.isNativePlatform() ||
+    autoConnectSuppressed ||
+    autoConnectBusy ||
+    connectedSensorSessions().length > 0 ||
+    sensorSessions.some((session) => session.connecting)
+  ) {
+    return;
+  }
+
+  const session = sensorSessions[0];
+  autoConnectBusy = true;
+  session.intentionalDisconnect = false;
+  session.connecting = true;
+  session.detail = 'Searching automatically';
+  refreshSensorFleetState();
+
+  try {
+    await BleClient.initialize({ androidNeverForLocation: false });
+    const device = await scanForSensorDevice(session, new Set(), {
+      durationMs: AUTO_CONNECT_SCAN_MS,
+      preferredDeviceId: readLastSensorId(),
+    });
+    if (!device) {
+      session.detail = 'No RoadLens gateway nearby';
+      return;
+    }
+    await attachSensor(session, device, { clearExistingLink: true });
+    session.reconnectAttempt = 0;
+  } catch (error) {
+    session.device = null;
+    session.status = null;
+    session.detail = error instanceof Error ? `Auto-connect: ${error.message}` : 'Auto-connect waiting';
+  } finally {
+    session.connecting = false;
+    autoConnectBusy = false;
+    refreshSensorFleetState();
+    scheduleAutoConnectRetry();
+  }
+}
+
 async function connectSensor(preferredSlotId?: number) {
   const session =
     (preferredSlotId != null ? sensorSessions[preferredSlotId] : null) ??
@@ -949,6 +1033,11 @@ async function connectSensor(preferredSlotId?: number) {
 
   let device: BleDevice | null = null;
   try {
+    autoConnectSuppressed = false;
+    if (autoConnectTimer != null) {
+      window.clearTimeout(autoConnectTimer);
+      autoConnectTimer = null;
+    }
     session.intentionalDisconnect = false;
     session.connecting = true;
     session.detail = 'Preparing Bluetooth';
@@ -1005,6 +1094,7 @@ async function attachSensor(
 
   session.device = device;
   session.lastDevice = device;
+  rememberSensor(device);
   session.status = null;
   session.notificationBuffer = '';
   session.detail = `${device.name ?? SENSOR_NAME} connected`;
@@ -1110,6 +1200,11 @@ async function disconnectSensor(session: SensorSession) {
   }
 
   const deviceId = session.device.deviceId;
+  autoConnectSuppressed = true;
+  if (autoConnectTimer != null) {
+    window.clearTimeout(autoConnectTimer);
+    autoConnectTimer = null;
+  }
   session.intentionalDisconnect = true;
   session.connecting = true;
   session.detail = 'Disconnecting';
@@ -1170,7 +1265,7 @@ function updateConnectionButton() {
   const count = connectedSensorSessions().length;
   const full = count >= MAX_SENSOR_CONNECTIONS;
   const icon = full ? 'bluetooth-off' : 'bluetooth';
-  const label = full ? 'Disconnect all' : count === 1 ? 'Add 2nd' : 'Pair sensor';
+  const label = full ? 'Disconnect' : 'Connect now';
   for (const button of connectionButtons) {
     button.classList.toggle('danger', full);
     button.classList.toggle('primary', !full);
@@ -1187,8 +1282,12 @@ function renderSensorFleet() {
       const scanning = Boolean(session.status?.sniffer_active) || session.detail.toLowerCase().endsWith('scanning');
       const title = session.device?.name ?? sensorSlotLabel(session);
       const version = session.status?.firmware_version ? `v${session.status.firmware_version}` : '';
+      const clusterNodes = session.status?.cluster_nodes ?? (connected ? 1 : 0);
+      const clusterDetail = connected
+        ? `${session.status?.cluster_role === 'gateway' ? 'Gateway' : 'Linked'} | ${clusterNodes} node${clusterNodes === 1 ? '' : 's'}`
+        : '';
       const detail = connected
-        ? `${scanning ? 'Scanning' : 'Linked'}${version ? ` | ${version}` : ''}`
+        ? `${clusterDetail}${scanning ? ' | scanning' : ''}${version ? ` | ${version}` : ''}`
         : session.detail;
       const buttonLabel = connected ? 'Disconnect' : 'Pair';
       const buttonIcon = connected ? 'bluetooth-off' : 'bluetooth';
@@ -1216,21 +1315,25 @@ function refreshSensorFleetState() {
   const scanning = connected.filter(
     (session) => session.status?.sniffer_active || session.detail.toLowerCase().endsWith('scanning'),
   ).length;
+  const pooledNodes = connected.reduce(
+    (count, session) => Math.max(count, session.status?.cluster_nodes ?? 1),
+    connected.length,
+  );
 
   if (connecting) {
-    setSensorState('busy', `${connected.length}/${MAX_SENSOR_CONNECTIONS} | ${connecting.detail}`);
+    setSensorState('busy', connecting.detail);
   } else if (connected.length > 0) {
     const detail =
-      scanning === connected.length
-        ? `${connected.length}/${MAX_SENSOR_CONNECTIONS} scanning`
-        : `${connected.length}/${MAX_SENSOR_CONNECTIONS} linked${scanning ? ` | ${scanning} scanning` : ''}`;
+      scanning > 0
+        ? `${pooledNodes} node${pooledNodes === 1 ? '' : 's'} pooled and scanning`
+        : `Gateway linked | ${pooledNodes} node${pooledNodes === 1 ? '' : 's'}`;
     setSensorState('online', detail);
   } else {
     const failed = sensorSessions.find((session) => session.detail.startsWith('Reconnect failed'));
-    setSensorState(failed ? 'error' : 'offline', failed?.detail ?? '0/2 paired');
+    setSensorState(failed ? 'error' : 'offline', failed?.detail ?? sensorSessions[0]?.detail ?? 'Searching automatically');
   }
 
-  signalText.textContent = `${connected.length}/${MAX_SENSOR_CONNECTIONS}`;
+  signalText.textContent = connected.length ? `${pooledNodes} nodes` : 'searching';
   updateConnectionButton();
   renderSensorFleet();
 }
@@ -1256,6 +1359,7 @@ function scheduleReconnect(session: SensorSession, device: BleDevice) {
   if (session.reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
     session.detail = 'Reconnect failed - tap Pair';
     refreshSensorFleetState();
+    scheduleAutoConnectRetry();
     return;
   }
 
@@ -1303,9 +1407,10 @@ async function findSensorDevice(session: SensorSession, excludedDeviceIds: Set<s
 async function scanForSensorDevice(
   session: SensorSession,
   excludedDeviceIds: Set<string>,
+  options: { durationMs?: number; preferredDeviceId?: string } = {},
 ): Promise<BleDevice | null> {
   let bestDevice: BleDevice | null = null;
-  let bestRssi = Number.NEGATIVE_INFINITY;
+  let bestScore = Number.NEGATIVE_INFINITY;
 
   session.detail = 'Scanning for RoadLens sensors';
   refreshSensorFleetState();
@@ -1332,17 +1437,20 @@ async function scanForSensorDevice(
           return;
         }
 
-        const rssi = result.rssi ?? Number.NEGATIVE_INFINITY;
-        if (!bestDevice || rssi > bestRssi) {
+        const rssi = result.rssi ?? -127;
+        const preferredBonus =
+          options.preferredDeviceId && result.device.deviceId === options.preferredDeviceId ? 1000 : 0;
+        const score = rssi + preferredBonus;
+        if (!bestDevice || score > bestScore) {
           bestDevice = result.device;
-          bestRssi = rssi;
+          bestScore = score;
           session.detail = `Found ${name || SENSOR_NAME}`;
           refreshSensorFleetState();
         }
       },
     );
 
-    await delay(6500);
+    await delay(options.durationMs ?? 6500);
   } catch {
     return null;
   } finally {
@@ -1776,6 +1884,10 @@ function normalizeSensorMessage(
       signature_version: raw.sv as string,
       signature_source: raw.ss as string,
       signature_sync_supported: Boolean(raw.sy),
+      cluster_role: raw.cr as SensorStatus['cluster_role'],
+      cluster_nodes: raw.cn as number,
+      cluster_id: raw.ci as string,
+      cluster_lane: raw.cl as number,
     };
   }
 
@@ -1796,6 +1908,7 @@ function normalizeSensorMessage(
     return {
       type: 'detection',
       source: 'wifi',
+      detector: typeof raw.n === 'string' ? `RoadLens-${raw.n}` : SENSOR_NAME,
       mac: raw.m as string,
       ssid: raw.s as string,
       role: raw.r as string,
@@ -1867,10 +1980,11 @@ function handleStatus(session: SensorSession, status: SensorStatus) {
   if (fleetStatuses.some((item) => item.sniffer_active) && detections === 0) {
     const candidates = fleetStatuses.reduce((sum, item) => sum + (item.candidate_frames ?? 0), 0);
     const wildcards = fleetStatuses.reduce((sum, item) => sum + (item.wildcard_probes ?? 0), 0);
+    const clusterNodes = Math.max(1, ...fleetStatuses.map((item) => item.cluster_nodes ?? 1));
     mapFocusText.textContent =
       frames > 0
-        ? `Dual scan: ${frames} frames, ${candidates} candidates, ${wildcards} wildcard probes`
-        : 'Scanning: no 2.4 GHz frames seen yet';
+        ? `Cluster scan (${clusterNodes} nodes): ${frames} gateway frames, ${candidates} candidates, ${wildcards} wildcard probes`
+        : `Cluster scan (${clusterNodes} nodes): no 2.4 GHz frames seen yet`;
   }
 
   if (primarySensorSession()?.slotId === session.slotId) {
@@ -2953,7 +3067,12 @@ async function saveDetection(detection: DetectionMessage, session?: SensorSessio
     source: detection.source ?? 'sensor',
     detector: detection.detector ?? SENSOR_NAME,
     sensorId: session?.device?.deviceId,
-    sensorLabel: session ? sensorSlotLabel(session) : undefined,
+    sensorLabel:
+      detection.detector?.startsWith('RoadLens-') && detection.detector !== SENSOR_NAME
+        ? detection.detector
+        : session
+          ? `${sensorSlotLabel(session)} gateway`
+          : undefined,
     label: detection.label ?? 'alpr-signal',
     mac: detection.mac ?? 'unknown',
     ssid: detection.ssid,
