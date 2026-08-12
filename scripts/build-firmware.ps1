@@ -59,7 +59,7 @@ foreach ($envName in $Environment) {
   $previousBuildDir = $env:PLATFORMIO_BUILD_DIR
   $env:PLATFORMIO_BUILD_DIR = $BuildRoot
   try {
-    python -m platformio run -d $FirmwareDir -e $envName
+    python -m platformio run -d $FirmwareDir -e $envName -j 1
   } finally {
     if ($null -eq $previousBuildDir) {
       Remove-Item Env:\PLATFORMIO_BUILD_DIR -ErrorAction SilentlyContinue

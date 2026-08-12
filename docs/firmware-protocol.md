@@ -2,27 +2,28 @@
 
 Each ESP32 advertises with a hardware-derived name such as `RoadLens-57E298`.
 
-Firmware `0.1.18` starts in BLE-first mode: it advertises its unique RoadLens name
-without running Wi-Fi promiscuous scanning, then starts passive Wi-Fi detection
-only after the phone has connected, subscribed to notifications, and sent
-`start-scan`. On disconnect, Wi-Fi monitor mode is stopped and BLE advertising
-restarts.
+Firmware `0.1.20` starts as an ESP-NOW cluster worker on control channel 6. The
+Android app automatically connects to one nearby RoadLens device; that device
+becomes the gateway and coordinates up to seven workers. `start-scan` opens a
+repeating control window, assigns deterministic staggered scan lanes, and pools
+worker detections through the gateway BLE connection. On gateway disconnect or
+timeout, workers stop scanning and return to control-channel discovery.
 
 Outgoing JSON records are queued and sent as paced notifications capped at 220
-bytes. Firmware `0.1.18` uses compact field names so normal records fit in one
+bytes. Firmware `0.1.20` uses compact field names so normal records fit in one
 notification; the app accepts both compact and legacy verbose records.
 
 The `ping` command returns the compact `{"type":"pong"}` record and can be used
 to verify notification delivery before starting the Wi-Fi monitor.
 
-Firmware `0.1.18` scans 2.4 GHz channels 1-11, uses the public Flock-style
+Firmware `0.1.20` scans 2.4 GHz channels 1-11, uses the public Flock-style
 Wi-Fi signature set, detects empty probe requests, and parses Wi-Fi management
 SSIDs for Flock-style provisioning/battery/module names. It reports raw scan
 counters so the app can distinguish "no match" from "not seeing frames." It
 also accepts an app-synced signature feed and stores it in ESP32 preferences,
 falling back to the built-in set when no synced feed exists.
 
-Firmware `0.1.18` also supports BLE-orchestrated OTA updates. The app sends Wi-Fi
+Firmware `0.1.20` also supports BLE-orchestrated OTA updates. The app sends Wi-Fi
 credentials and the expected firmware size/SHA256 in compact staged commands.
 The ESP32 downloads its chip-specific firmware from RoadLens Pages, verifies the
 SHA256 before finalizing the update, and reboots after success.
@@ -45,21 +46,21 @@ The notify characteristic emits newline-delimited JSON. The same JSON is printed
 Detection example:
 
 ```json
-{"t":"d","m":"70:c9:4e:00:00:00","s":"Flock-ABC123","r":"ssid","l":"flock-wifi-ssid","p":-71,"c":6,"ft":0,"fs":4,"w":0,"q":88,"u":123456}
+{"t":"d","m":"70:c9:4e:00:00:00","s":"Flock-ABC123","r":"ssid","l":"flock-wifi-ssid","p":-71,"c":6,"ft":0,"fs":4,"w":0,"q":88,"u":123456,"n":"57E298"}
 ```
 
 Status is emitted as a core record followed by a metrics record. The app merges
 both records for the corresponding sensor session:
 
 ```json
-{"t":"s","d":"RoadLens-57E298","r":"heartbeat","u":123456,"c":6,"b":1,"a":1,"v":"0.1.18","h":"ESP32","o":1,"i":0,"ov":"","g":46,"sv":"2026.06.28.003ddaa1","ss":"synced","sy":1}
+{"t":"s","d":"RoadLens-57E298","r":"heartbeat","u":123456,"c":6,"b":1,"a":1,"v":"0.1.20","h":"ESP32","o":1,"i":0,"ov":"","g":46,"sv":"2026.06.28.003ddaa1","ss":"synced","sy":1,"cr":"gateway","cn":3,"ci":"57E298","cl":0}
 {"t":"m","n":3,"f":1800,"m":700,"x":1100,"w":8,"k":3,"q":0}
 ```
 
 OTA status example:
 
 ```json
-{"t":"o","s":"download","d":"Downloading firmware","p":50,"v":"0.1.18","c":"ESP32"}
+{"t":"o","s":"download","d":"Downloading firmware","p":50,"v":"0.1.20","c":"ESP32"}
 ```
 
 Signature status example:

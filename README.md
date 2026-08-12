@@ -59,18 +59,18 @@ USB upload:
 Replace `COM15` with the live ESP32 port.
 
 After flashing, reset or power-cycle the board and look for a unique BLE device
-name such as `RoadLens-57E298` from the Android app. Firmware `0.1.18` keeps Wi-Fi monitor mode
-off until the phone has connected and subscribed to notifications, then the app
-sends `start-scan` to begin passive detection after the BLE link settles. It
-scans 2.4 GHz channels 1-11,
+name such as `RoadLens-57E298` from the Android app. Firmware `0.1.20` lets one
+nearby board become the phone gateway automatically while other RoadLens boards
+join over ESP-NOW as workers. The gateway divides channel work into staggered
+lanes, pools detections, and reports the active node count. It scans 2.4 GHz channels 1-11,
 reports raw frame counters in app status, matches the current public
 Flock-style Wi-Fi signature feed, detects empty probe requests, and tags
 Flock-style SSIDs such as `Flock-*` and battery/module names when they appear in
 management frames. The app can sync newer signature feeds into v0.1.8+ sensors
 over BLE, and the ESP32 stores the synced feed locally.
 
-Firmware `0.1.18` uses NimBLE-Arduino 2.5 and compact, single-notification BLE
-records to keep both sensor links stable while Wi-Fi monitoring is active.
+Firmware `0.1.20` uses NimBLE-Arduino 2.5 and compact, single-notification BLE
+records to keep the gateway link stable while clustered Wi-Fi monitoring is active.
 
 For a specific USB-upload target:
 
@@ -108,13 +108,12 @@ Then apply the printed environment variables in the same shell and rerun the APK
 The Android app has a `Setup` tab for a phone-plugged ESP32. It detects USB-OTG
 serial devices such as Espressif native USB, CP210x, CH34x, and FTDI bridges,
 requests Android USB permission, and flashes the bundled RoadLens firmware from
-inside the APK. After flashing, use `Pair sensor` to connect the first board,
-then `Add 2nd` to connect another. The Sensor Fleet panel shows both links and
-provides a separate Disconnect button for each board. With both connected, the
-map combines their detections and frame counters while retaining which sensor
-reported each hit.
+inside the APK. The app automatically reconnects to the last gateway when it is
+nearby, or selects the strongest RoadLens gateway. Other flashed boards join the
+gateway without separate phone pairing. The Sensor Fleet panel shows the pooled
+node count, and every saved hit retains the worker node that reported it.
 
-Two sensors carried together improve radio coverage, but do not create two GPS
+Multiple sensors carried together improve radio coverage, but do not create multiple GPS
 vantage points. RoadLens stores both readings while counting simultaneous hits
 from the same phone location as one independent pass; a likely point still
 requires detections from a later time or meaningfully different position.
@@ -144,7 +143,7 @@ operator can review and attach/share the report intentionally.
 
 ### Sensor OTA Updates
 
-Firmware `0.1.18` supports in-app ESP32 firmware updates after the board has been
+Firmware `0.1.20` supports in-app ESP32 firmware updates after the board has been
 flashed once by USB or the web flasher. When the app connects to a sensor, it
 reads the sensor firmware version and chip family, checks RoadLens Pages
 metadata, and prompts if a newer matching firmware build is available.

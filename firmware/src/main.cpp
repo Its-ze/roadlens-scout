@@ -45,7 +45,7 @@ static constexpr uint32_t CLUSTER_NODE_TIMEOUT_MS = 9000;
 static constexpr size_t MAX_CLUSTER_NODES = 8;
 static constexpr size_t BLE_NOTIFY_CHUNK_BYTES = 220;
 static constexpr uint32_t BLE_NOTIFY_INTERVAL_MS = 100;
-static constexpr size_t BLE_MESSAGE_MAX_BYTES = 256;
+static constexpr size_t BLE_MESSAGE_MAX_BYTES = 384;
 static constexpr UBaseType_t BLE_MESSAGE_QUEUE_LENGTH = 24;
 static constexpr uint32_t OTA_WIFI_TIMEOUT_MS = 25000;
 static constexpr uint32_t OTA_HTTP_IDLE_TIMEOUT_MS = 45000;
@@ -219,6 +219,10 @@ static void queueClusterPacket(const uint8_t *data, int length) {
   }
   ClusterPacket packet = {};
   memcpy(&packet, data, sizeof(packet));
+  packet.mac[sizeof(packet.mac) - 1] = '\0';
+  packet.role[sizeof(packet.role) - 1] = '\0';
+  packet.label[sizeof(packet.label) - 1] = '\0';
+  packet.ssid[sizeof(packet.ssid) - 1] = '\0';
   if (packet.magic != CLUSTER_MAGIC || packet.protocolVersion != 1 ||
       memcmp(packet.sourceMac, selfMac, sizeof(selfMac)) == 0) {
     return;
@@ -926,7 +930,7 @@ static void emitDetection(const DetectionEvent &event) {
 
   const String escapedLabel = jsonEscape(String(event.label));
   const String escapedSsid = jsonEscape(String(event.ssid));
-  char json[256];
+  char json[384];
   snprintf(json, sizeof(json),
            "{\"t\":\"d\",\"m\":\"%s\",\"s\":\"%s\",\"r\":\"%s\",\"l\":\"%s\"," 
            "\"p\":%d,\"c\":%u,\"ft\":%u,\"fs\":%u,\"w\":%u,\"q\":%u,\"u\":%lu," 
@@ -946,7 +950,7 @@ static void emitRemoteDetection(const ClusterPacket &packet) {
            packet.sourceMac[4], packet.sourceMac[5]);
   const String escapedLabel = jsonEscape(String(packet.label));
   const String escapedSsid = jsonEscape(String(packet.ssid));
-  char json[280];
+  char json[384];
   snprintf(json, sizeof(json),
            "{\"t\":\"d\",\"m\":\"%s\",\"s\":\"%s\",\"r\":\"%s\",\"l\":\"%s\"," 
            "\"p\":%d,\"c\":%u,\"ft\":%u,\"fs\":%u,\"w\":%u,\"q\":%u,\"u\":%lu," 
@@ -1310,6 +1314,10 @@ static void performOtaUpdate() {
   otaStartRequested = false;
   otaInProgress = true;
   stopSniffer();
+  if (clusterRadioReady) {
+    esp_now_deinit();
+    clusterRadioReady = false;
+  }
   emitOtaStatus("wifi", "Joining Wi-Fi", 2);
 
   HTTPClient http;
@@ -1457,6 +1465,7 @@ ota_cleanup:
   WiFi.mode(WIFI_OFF);
   resetOtaConfig();
   otaInProgress = false;
+  setupClusterRadio();
   if (failure.length() > 0 && bleConnected && snifferStartRequested) {
     setupSniffer();
   }

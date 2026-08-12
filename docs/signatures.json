@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "name": "RoadLens Scout Detection Signatures",
-  "version": "2026.07.23.3975d365",
-  "generatedAt": "2026-07-23T12:01:51Z",
+  "version": "2026.08.11.f84b567d",
+  "generatedAt": "2026-08-11T11:03:44Z",
   "sources": [
     {
       "name": "Flock-You Wi-Fi OUI research",
       "url": "https://raw.githubusercontent.com/colonelpanichacks/flock-you/HEAD/datasets/NitekryDPaul_wifi_ouis.md",
       "kind": "wifi",
-      "retrievedAt": "2026-07-23T12:01:47Z",
+      "retrievedAt": "2026-08-11T11:03:42Z",
       "ok": true,
       "prefixes": 30,
       "names": 1,
@@ -20,9 +20,9 @@
       "name": "OUI-Spy Unified Blue README",
       "url": "https://raw.githubusercontent.com/colonelpanichacks/oui-spy-unified-blue/HEAD/README.md",
       "kind": "ble-notes",
-      "retrievedAt": "2026-07-23T12:01:47Z",
+      "retrievedAt": "2026-08-11T11:03:43Z",
       "ok": true,
-      "prefixes": 1,
+      "prefixes": 6,
       "names": 4,
       "manufacturerIds": 1,
       "ravenServiceUuids": 0,
@@ -32,9 +32,9 @@
       "name": "OUI-Spy Unified Blue Flock-You source",
       "url": "https://raw.githubusercontent.com/colonelpanichacks/oui-spy-unified-blue/HEAD/src/raw/flockyou.cpp",
       "kind": "ble-source",
-      "retrievedAt": "2026-07-23T12:01:47Z",
+      "retrievedAt": "2026-08-11T11:03:43Z",
       "ok": true,
-      "prefixes": 42,
+      "prefixes": 44,
       "names": 4,
       "manufacturerIds": 1,
       "ravenServiceUuids": 8,
@@ -44,14 +44,13 @@
       "name": "WiFiMothership Flock detector confidence notes",
       "url": "https://wifimothership.com/flock",
       "kind": "detector-confidence",
-      "retrievedAt": "2026-07-23T12:01:47Z",
-      "ok": false,
-      "prefixes": 0,
-      "names": 0,
-      "manufacturerIds": 0,
+      "retrievedAt": "2026-08-11T11:03:43Z",
+      "ok": true,
+      "prefixes": 25,
+      "names": 4,
+      "manufacturerIds": 1,
       "ravenServiceUuids": 0,
-      "wifiSsidPatterns": 0,
-      "error": "Response status code does not indicate success: 502 (Bad Gateway)."
+      "wifiSsidPatterns": 4
     }
   ],
   "wifiPrefixes": [
@@ -306,6 +305,48 @@
       "label": "flock-wifi-wildcard",
       "allowLocalAdministered": true,
       "wildcardProbe": true
+    },
+    {
+      "prefix": "00:25:df",
+      "label": "flock-wifi",
+      "allowLocalAdministered": false,
+      "wildcardProbe": false
+    },
+    {
+      "prefix": "00:40:8c",
+      "label": "flock-wifi",
+      "allowLocalAdministered": false,
+      "wildcardProbe": false
+    },
+    {
+      "prefix": "ac:cc:8e",
+      "label": "flock-wifi",
+      "allowLocalAdministered": false,
+      "wildcardProbe": false
+    },
+    {
+      "prefix": "b8:27:eb",
+      "label": "flock-wifi",
+      "allowLocalAdministered": false,
+      "wildcardProbe": false
+    },
+    {
+      "prefix": "dc:a6:32",
+      "label": "flock-wifi",
+      "allowLocalAdministered": false,
+      "wildcardProbe": false
+    },
+    {
+      "prefix": "e4:5f:01",
+      "label": "flock-wifi",
+      "allowLocalAdministered": false,
+      "wildcardProbe": false
+    },
+    {
+      "prefix": "2c:cf:67",
+      "label": "flock-wifi",
+      "allowLocalAdministered": false,
+      "wildcardProbe": false
     }
   ],
   "blePrefixes": [
@@ -350,7 +391,14 @@
     "f4:e2:c6",
     "d4:11:d6",
     "e0:0a:f6",
-    "82:6b:f2"
+    "82:6b:f2",
+    "00:25:df",
+    "00:40:8c",
+    "ac:cc:8e",
+    "b8:27:eb",
+    "dc:a6:32",
+    "e4:5f:01",
+    "2c:cf:67"
   ],
   "bleNamePatterns": [
     "FS Ext Battery",
