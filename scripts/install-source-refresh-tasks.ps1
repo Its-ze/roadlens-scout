@@ -8,7 +8,10 @@ if (-not (Test-Path -LiteralPath $runner)) {
   throw "Missing refresh runner: $runner"
 }
 
-$powerShell = (Get-Process -Id $PID).Path
+$powerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+if (-not (Test-Path -LiteralPath $powerShell)) {
+  throw "Stable Windows PowerShell executable was not found: $powerShell"
+}
 $userId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
@@ -36,5 +39,7 @@ foreach ($task in $tasks) {
 
 Write-Output "Installed guarded RoadLens source-refresh tasks for $userId."
 if ($PassThru) {
-  Get-ScheduledTask -TaskName ($tasks.Name) | Select-Object TaskName, State, Description
+  foreach ($task in $tasks) {
+    Get-ScheduledTask -TaskName $task.Name | Select-Object TaskName, State, Description
+  }
 }
