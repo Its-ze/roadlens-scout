@@ -171,7 +171,12 @@ def parse_int(value):
 
 def write_json(path: pathlib.Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+    write_text_lf(path, json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def write_text_lf(path: pathlib.Path, value: str) -> None:
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(value)
 
 
 def sync_pages_metadata(feed) -> None:
@@ -192,7 +197,7 @@ def sync_pages_metadata(feed) -> None:
                 "points": feed["pointCount"],
                 "sources": len(feed.get("sources") or []),
             }
-            DOCS_META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=4) + "\n", encoding="utf-8")
+            write_text_lf(DOCS_META_PATH, json.dumps(meta, ensure_ascii=False, indent=4) + "\n")
 
     if DOCS_CHECKSUMS_PATH.exists():
         lines = DOCS_CHECKSUMS_PATH.read_text(encoding="utf-8-sig").splitlines()
@@ -207,7 +212,7 @@ def sync_pages_metadata(feed) -> None:
                 next_lines.append(line)
         if not replaced:
             next_lines.insert(0, camera_line)
-        DOCS_CHECKSUMS_PATH.write_text("\n".join(next_lines) + "\n", encoding="utf-8")
+        write_text_lf(DOCS_CHECKSUMS_PATH, "\n".join(next_lines) + "\n")
 
 
 if __name__ == "__main__":

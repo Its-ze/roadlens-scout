@@ -1,33 +1,30 @@
-name: Update detection signatures
+name: Verify detection signatures
 
 on:
+  push:
+    paths:
+      - "data/signatures.json"
+      - "app/public/signatures.json"
+      - "scripts/verify-source-feeds.ps1"
+      - ".github/workflows/update-signatures.yml"
+  pull_request:
+    paths:
+      - "data/signatures.json"
+      - "app/public/signatures.json"
+      - "scripts/verify-source-feeds.ps1"
+      - ".github/workflows/update-signatures.yml"
   workflow_dispatch:
-  schedule:
-    - cron: "18 10 * * *"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  update-signatures:
+  verify-signatures:
     runs-on: windows-latest
     steps:
-      - name: Check out repo
-        uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Refresh signature feed
+      - name: Verify signature feed
         shell: pwsh
-        run: .\scripts\update-signatures.ps1
-
-      - name: Commit changed feed
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/signatures.json app/public/signatures.json
-          if (git diff --cached --quiet) {
-            "No signature changes."
-            exit 0
-          }
-          git commit -m "Update RoadLens detection signatures"
-          git push
+        run: .\scripts\verify-source-feeds.ps1 -Feed signatures

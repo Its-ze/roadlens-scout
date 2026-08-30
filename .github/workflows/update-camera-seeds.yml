@@ -1,38 +1,36 @@
-name: Update camera seed map
+name: Verify camera seed map
 
 on:
+  push:
+    paths:
+      - "data/camera-seeds.json"
+      - "app/public/camera-seeds.json"
+      - "docs/camera-seeds.json"
+      - "docs/site-meta.json"
+      - "docs/downloads/checksums.txt"
+      - "scripts/verify-source-feeds.ps1"
+      - ".github/workflows/update-camera-seeds.yml"
+  pull_request:
+    paths:
+      - "data/camera-seeds.json"
+      - "app/public/camera-seeds.json"
+      - "docs/camera-seeds.json"
+      - "docs/site-meta.json"
+      - "docs/downloads/checksums.txt"
+      - "scripts/verify-source-feeds.ps1"
+      - ".github/workflows/update-camera-seeds.yml"
   workflow_dispatch:
-  schedule:
-    - cron: "38 11 * * 2"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  update-camera-seeds:
+  verify-camera-seeds:
     runs-on: windows-latest
     steps:
-      - name: Check out repo
-        uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
-      - name: Refresh camera seed feed
+      - name: Verify camera seed feed
         shell: pwsh
-        run: .\scripts\update-camera-seeds.ps1
-
-      - name: Commit changed feed
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/camera-seeds.json app/public/camera-seeds.json docs/camera-seeds.json docs/site-meta.json docs/downloads/checksums.txt
-          if (git diff --cached --quiet) {
-            "No camera seed changes."
-            exit 0
-          }
-          git commit -m "Update RoadLens camera seed map"
-          git push
+        run: .\scripts\verify-source-feeds.ps1 -Feed camera-seeds
