@@ -1,14 +1,14 @@
 {
     "schema":  1,
     "name":  "RoadLens Scout Detection Signatures",
-    "version":  "2026.09.16.f477c48a",
-    "generatedAt":  "2026-09-16T10:18:03Z",
+    "version":  "2026.09.18.0beeaa2c",
+    "generatedAt":  "2026-09-18T10:18:03Z",
     "sources":  [
                     {
                         "name":  "Flock-You Wi-Fi OUI research",
                         "url":  "https://raw.githubusercontent.com/colonelpanichacks/flock-you/HEAD/datasets/NitekryDPaul_wifi_ouis.md",
                         "kind":  "wifi",
-                        "retrievedAt":  "2026-09-16T10:18:02Z",
+                        "retrievedAt":  "2026-09-18T10:18:02Z",
                         "ok":  true,
                         "prefixes":  35,
                         "names":  1,
@@ -20,19 +20,19 @@
                         "name":  "OUI-Spy Unified Blue README",
                         "url":  "https://raw.githubusercontent.com/colonelpanichacks/oui-spy-unified-blue/HEAD/README.md",
                         "kind":  "ble-notes",
-                        "retrievedAt":  "2026-09-16T10:18:02Z",
+                        "retrievedAt":  "2026-09-18T10:18:02Z",
                         "ok":  true,
-                        "prefixes":  3,
-                        "names":  1,
+                        "prefixes":  4,
+                        "names":  2,
                         "manufacturerIds":  1,
                         "ravenServiceUuids":  0,
-                        "wifiSsidPatterns":  0
+                        "wifiSsidPatterns":  1
                     },
                     {
                         "name":  "OUI-Spy Unified Blue Flock-You source",
                         "url":  "https://raw.githubusercontent.com/colonelpanichacks/oui-spy-unified-blue/HEAD/src/raw/flockyou.cpp",
                         "kind":  "ble-source",
-                        "retrievedAt":  "2026-09-16T10:18:03Z",
+                        "retrievedAt":  "2026-09-18T10:18:02Z",
                         "ok":  false,
                         "prefixes":  0,
                         "names":  0,
@@ -45,7 +45,7 @@
                         "name":  "WiFiMothership Flock detector confidence notes",
                         "url":  "https://wifimothership.com/flock",
                         "kind":  "detector-confidence",
-                        "retrievedAt":  "2026-09-16T10:18:03Z",
+                        "retrievedAt":  "2026-09-18T10:18:02Z",
                         "ok":  true,
                         "prefixes":  25,
                         "names":  4,
@@ -320,6 +320,12 @@
                              "wildcardProbe":  false
                          },
                          {
+                             "prefix":  "00:03:7f",
+                             "label":  "flock-wifi",
+                             "allowLocalAdministered":  false,
+                             "wildcardProbe":  false
+                         },
+                         {
                              "prefix":  "b8:27:eb",
                              "label":  "flock-wifi",
                              "allowLocalAdministered":  false,
@@ -389,6 +395,7 @@
                         "82:6b:f2",
                         "6c:cd:d6",
                         "00:25:df",
+                        "00:03:7f",
                         "b8:27:eb",
                         "dc:a6:32",
                         "e4:5f:01",
