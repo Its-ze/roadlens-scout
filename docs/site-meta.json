@@ -48,10 +48,10 @@
     },
     "cameraSeeds": {
         "path": "camera-seeds.json",
-        "version": "2026.10.13.b1f2fda6",
-        "bytes": 25162477,
-        "sha256": "0ad2a443233cbcaf120d4a9e6ef49099659cccf2b6bfa50f29b9889d1d873ca5",
-        "points": 116429,
+        "version": "2026.10.20.21ce1bb4",
+        "bytes": 25227702,
+        "sha256": "79f30272e639fffbbc3285c62246b88a58efa9ef9759be0b7ec5a620fe0c5247",
+        "points": 116734,
         "sources": 1
     }
 }
